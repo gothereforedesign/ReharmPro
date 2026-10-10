@@ -42,22 +42,51 @@ const NOTE_TO_SEMITONE: Record<string, number> = {
 };
 
 // Pitch range constants (MIDI note numbers)
-const BASS_MIN_MIDI = 40; // E2 (~82.4 Hz) - strict lower floor to prevent sub-bass mud
-const BASS_MAX_MIDI = 55; // G3 (~196.0 Hz)
+const BASS_MIN_MIDI = 38; // D2 (~73.4 Hz) - clean deep bass floor
+const BASS_MAX_MIDI = 50; // D3 (~146.8 Hz) - prevents bass from crowding middle register
+const BASS_TARGET_MIDI = 43; // G2 (~98.0 Hz) - warm acoustic bass center
 const HARMONY_MIN_MIDI = 48; // C3 (~130.8 Hz) - no close intervals below C3
-const HARMONY_MAX_MIDI = 79; // G5 (~784.0 Hz)
-const HARMONY_TARGET_CENTROID = 62; // D4 (~293.7 Hz) warm keyboard/guitar center
+const HARMONY_MAX_MIDI = 70; // Bb4 (~466.2 Hz) - prevents piercing high-octave jumps
+const HARMONY_TARGET_CENTROID = 59.0; // B3 (~246.9 Hz) - warm, cohesive piano middle register
 
 function midiToFreq(midi: number): number {
   return 440 * Math.pow(2, (midi - 69) / 12);
 }
 
-function clampBassMidi(pitchClass: number): number {
-  // Place in Octave 2 first (C2 = 36)
-  let midi = 36 + ((pitchClass % 12) + 12) % 12;
-  while (midi < BASS_MIN_MIDI) midi += 12;
-  while (midi > BASS_MAX_MIDI) midi -= 12;
-  return midi;
+/**
+ * Chooses the optimal bass MIDI note in [BASS_MIN_MIDI..BASS_MAX_MIDI],
+ * balancing smooth voice-leading from `prevBassMidi` with a warm anchor around G2 (43).
+ */
+function chooseBassMidi(pitchClass: number, prevBassMidi: number | null = null): number {
+  const pc = ((pitchClass % 12) + 12) % 12;
+  const candidates: number[] = [];
+  for (let oct = 2; oct <= 4; oct++) {
+    const m = 12 * oct + pc;
+    if (m >= BASS_MIN_MIDI && m <= BASS_MAX_MIDI + 2) {
+      candidates.push(m);
+    }
+  }
+  if (candidates.length === 0) {
+    let fallback = 36 + pc;
+    while (fallback < BASS_MIN_MIDI) fallback += 12;
+    while (fallback > BASS_MAX_MIDI) fallback -= 12;
+    return fallback;
+  }
+
+  let best = candidates[0];
+  let bestScore = Infinity;
+  for (const m of candidates) {
+    const centerPenalty = Math.abs(m - BASS_TARGET_MIDI) * 0.7;
+    const rangePenalty = m > BASS_MAX_MIDI ? (m - BASS_MAX_MIDI) * 2.5 : 0;
+    const motionPenalty =
+      prevBassMidi !== null ? Math.abs(m - prevBassMidi) * 1.4 : 0;
+    const score = centerPenalty + rangePenalty + motionPenalty;
+    if (score < bestScore) {
+      bestScore = score;
+      best = m;
+    }
+  }
+  return best;
 }
 
 export interface ParsedChordIntervals {
@@ -189,44 +218,51 @@ export function parseChordForVoicing(chordSymbol: string): ParsedChordIntervals 
 }
 
 /**
- * Generates candidate upper-structure voicings (inversions + Drop-2 open voicings)
- * strictly within [HARMONY_MIN_MIDI (C3=48), HARMONY_MAX_MIDI (G5=79)],
- * ensuring no close intervals (< 5 semitones) exist below C3.
+ * Generates candidate 4-voice upper-structure voicings (sorted close inversions + Drop-2 voicings)
+ * strictly within [HARMONY_MIN_MIDI (C3=48), HARMONY_MAX_MIDI (Bb4=70)],
+ * ensuring consistent 4-voice hand density across triads and 7th/extended chords.
  */
 function generateCandidateUpperVoicings(
   rootPc: number,
   bassMidi: number,
   intervals: number[]
 ): number[][] {
-  // Unique pitch classes for the upper harmony voices
+  // Unique pitch classes for the upper harmony voices, sorted in ascending pitch-class order [0..11]
+  // Sorting prevents inversions from accidentally leaping across two octaves!
   const pcs: number[] = [];
   intervals.forEach(intv => {
     const pc = (((rootPc + intv) % 12) + 12) % 12;
     if (!pcs.includes(pc)) pcs.push(pc);
   });
   while (pcs.length < 3) {
-    const fallbackPc = (rootPc + (pcs.length === 1 ? 7 : 12)) % 12;
+    const fallbackPc = (rootPc + (pcs.length === 1 ? 7 : 4)) % 12;
     if (!pcs.includes(fallbackPc)) pcs.push(fallbackPc);
     else break;
   }
+  pcs.sort((a, b) => a - b);
 
   const candidates: number[][] = [];
-  const minUpperMidi = Math.max(HARMONY_MIN_MIDI, bassMidi + 5); // At least a fourth above bass
+  const minUpperMidi = Math.max(HARMONY_MIN_MIDI, bassMidi + 4); // At least a major third above bass
 
-  // Build close-position inversions across octaves 3 and 4, then also derive Drop-2 voicings
-  for (let startOctave = 3; startOctave <= 4; startOctave++) {
+  // Build true close-position 4-voice piano inversions across octaves 2, 3, and 4
+  for (let startOctave = 2; startOctave <= 4; startOctave++) {
     for (let inv = 0; inv < pcs.length; inv++) {
       const rotated = [...pcs.slice(inv), ...pcs.slice(0, inv)];
-      const closeVoicing: number[] = [];
-      let currentMidi = 12 * (startOctave + 1) + rotated[0];
+      // Ensure a consistent 4-voice upper structure (for 3-note triads, double the bottom note of the inversion an octave up)
+      const fourPcs =
+        rotated.length === 3
+          ? [rotated[0], rotated[1], rotated[2], rotated[0]]
+          : rotated.slice(0, 4);
 
-      for (let i = 0; i < rotated.length; i++) {
-        let m = 12 * (startOctave + 1) + rotated[i];
+      const closeVoicing: number[] = [];
+
+      for (let i = 0; i < fourPcs.length; i++) {
+        let m = 12 * (startOctave + 1) + fourPcs[i];
         while (i > 0 && m <= closeVoicing[i - 1]) {
           m += 12;
         }
-        // Prevent 2nds in the lower-mid register (< E4 = 64) from sounding clustered
-        if (i > 0 && m - closeVoicing[i - 1] <= 2 && closeVoicing[i - 1] < 60) {
+        // If two lower voices form a tight minor 2nd (1 semitone) below F3 (53), open the upper voice by an octave
+        if (i === 1 && m - closeVoicing[0] === 1 && closeVoicing[0] < 54) {
           m += 12;
         }
         closeVoicing.push(m);
@@ -234,27 +270,34 @@ function generateCandidateUpperVoicings(
 
       closeVoicing.sort((a, b) => a - b);
 
-      // Validate range & mud rules
+      // Validate range & low-register clarity rules
+      const span = closeVoicing[closeVoicing.length - 1] - closeVoicing[0];
+      const hasLowCluster =
+        closeVoicing.length >= 2 &&
+        closeVoicing[0] < 52 &&
+        closeVoicing[1] - closeVoicing[0] < 3;
+
       if (
         closeVoicing[0] >= minUpperMidi &&
         closeVoicing[closeVoicing.length - 1] <= HARMONY_MAX_MIDI &&
-        !(closeVoicing.length >= 2 && closeVoicing[0] < 52 && closeVoicing[1] - closeVoicing[0] < 4)
+        span <= 14 &&
+        !hasLowCluster
       ) {
         candidates.push(closeVoicing);
       }
 
-      // Create Drop-2 open voicing from 4-note close voicing:
-      // Drop the second-highest voice down 1 octave for lush open spacing
-      if (closeVoicing.length >= 4) {
+      // Also derive a Drop-2 open voicing when it remains compact and within the warm piano pocket
+      if (closeVoicing.length === 4) {
         const drop2 = [...closeVoicing];
-        const secondHighestIdx = drop2.length - 2;
-        drop2[secondHighestIdx] -= 12;
+        drop2[2] -= 12; // Drop second-highest voice by 1 octave
         drop2.sort((a, b) => a - b);
 
+        const dropSpan = drop2[3] - drop2[0];
         const lowestGap = drop2[1] - drop2[0];
         if (
           drop2[0] >= minUpperMidi &&
-          drop2[drop2.length - 1] <= HARMONY_MAX_MIDI &&
+          drop2[3] <= HARMONY_MAX_MIDI &&
+          dropSpan <= 16 &&
           (drop2[0] >= 52 || lowestGap >= 4)
         ) {
           candidates.push(drop2);
@@ -264,9 +307,16 @@ function generateCandidateUpperVoicings(
   }
 
   if (candidates.length === 0) {
-    // Safe fallback centered around C4
-    const fallback = pcs.map((pc, idx) => 60 + pc + (idx > 2 ? 12 : 0)).sort((a, b) => a - b);
-    return [fallback];
+    // Safe compact fallback centered around B3/C4
+    const fallback: number[] = [];
+    const fourPcs = pcs.length === 3 ? [pcs[0], pcs[1], pcs[2], pcs[0]] : pcs.slice(0, 4);
+    for (let i = 0; i < fourPcs.length; i++) {
+      let m = 48 + fourPcs[i];
+      while (m < 52) m += 12;
+      while (i > 0 && m <= fallback[i - 1]) m += 12;
+      fallback.push(m);
+    }
+    return [fallback.sort((a, b) => a - b)];
   }
 
   return candidates;
@@ -274,14 +324,17 @@ function generateCandidateUpperVoicings(
 
 /**
  * Computes the optimal full voicing [bassMidi, ...upperHarmonyMidi] using smooth voice leading
- * from `prevUpperVoices` when available.
+ * from `prevUpperVoices` and `prevBassMidi` when available.
+ * Prevents jarring range jumps (such as F to B7) by anchoring common tones,
+ * minimizing individual voice motion, and locking soprano (top-voice) and centroid continuity.
  */
 export function computeSmartVoicing(
   chordSymbol: string,
-  prevUpperVoices: number[] | null = null
+  prevUpperVoices: number[] | null = null,
+  prevBassMidi: number | null = null
 ): { bassMidi: number; upperMidis: number[]; allMidis: number[] } {
   const parsed = parseChordForVoicing(chordSymbol);
-  const bassMidi = clampBassMidi(parsed.bassPc);
+  const bassMidi = chooseBassMidi(parsed.bassPc, prevBassMidi);
   const candidates = generateCandidateUpperVoicings(
     parsed.rootPc,
     bassMidi,
@@ -293,29 +346,52 @@ export function computeSmartVoicing(
 
   for (const cand of candidates) {
     const centroid = cand.reduce((acc, m) => acc + m, 0) / cand.length;
-    const centroidPenalty = Math.abs(centroid - HARMONY_TARGET_CENTROID) * 1.35;
-    const span = cand[cand.length - 1] - cand[0];
-    // Prefer open voicings spanning roughly an octave (10-16 semitones)
-    const spanPenalty = span < 8 ? (8 - span) * 1.5 : span > 18 ? (span - 18) * 1.2 : 0;
+    const centroidPenalty = Math.abs(centroid - HARMONY_TARGET_CENTROID) * 1.6;
+    const topNote = cand[cand.length - 1];
+    // Gentle penalty for voicings climbing above F4 (65) so chords stay warm and grounded
+    const highRegisterPenalty = topNote > 65 ? (topNote - 65) * 1.35 : 0;
+    const span = topNote - cand[0];
+    // Favor compact piano hand spans (8 to 12 semitones)
+    const spanPenalty = span < 7 ? (7 - span) * 1.4 : span > 12 ? (span - 12) * 1.15 : 0;
 
-    let score = centroidPenalty + spanPenalty;
+    let score = centroidPenalty + highRegisterPenalty + spanPenalty;
 
     if (prevUpperVoices && prevUpperVoices.length > 0) {
-      // Voice-leading distance calculation:
-      // Match each note in `cand` to the nearest voice in `prevUpperVoices`
       let voiceMotion = 0;
       let commonToneBonus = 0;
       const len = Math.min(cand.length, prevUpperVoices.length);
 
       for (let i = 0; i < len; i++) {
         const diff = Math.abs(cand[i] - prevUpperVoices[i]);
-        if (diff === 0) {
-          commonToneBonus += 2.5; // Reward keeping shared notes stationary
-        } else {
-          voiceMotion += diff + (diff > 5 ? (diff - 5) * 1.8 : 0);
+        // Quadratic penalty for any voice leaping > 3 semitones
+        voiceMotion += diff + (diff > 3 ? (diff - 3) * (diff - 3) * 0.95 : 0);
+      }
+
+      // Check for common tones across ANY voice pair (e.g., A3=57 shared between F and B7)
+      for (const m of cand) {
+        if (prevUpperVoices.includes(m)) {
+          commonToneBonus += 2.6;
         }
       }
-      score = voiceMotion * 2.2 + centroidPenalty * 0.65 + spanPenalty - commonToneBonus;
+
+      // Soprano (top-note) continuity: human ear strongly tracks the highest voice
+      const prevTop = prevUpperVoices[prevUpperVoices.length - 1];
+      const topDiff = Math.abs(topNote - prevTop);
+      const topJumpPenalty = topDiff * 1.8 + (topDiff > 3 ? (topDiff - 3) * 2.4 : 0);
+
+      // Overall register centroid continuity between consecutive chords
+      const prevCentroid =
+        prevUpperVoices.reduce((acc, m) => acc + m, 0) / prevUpperVoices.length;
+      const centroidShiftPenalty = Math.abs(centroid - prevCentroid) * 3.1;
+
+      score =
+        voiceMotion * 2.1 +
+        topJumpPenalty +
+        centroidShiftPenalty +
+        centroidPenalty * 0.55 +
+        highRegisterPenalty +
+        spanPenalty -
+        commonToneBonus;
     }
 
     if (score < bestScore) {
@@ -337,6 +413,7 @@ export class ChordAudioEngine {
   private masterCompressor: DynamicsCompressorNode | null = null;
   private activeVoices: ActiveVoiceNodes[] = [];
   private lastUpperVoices: number[] | null = null;
+  private lastBassMidi: number | null = null;
 
   // Transport state
   private isPlaying = false;
@@ -369,8 +446,8 @@ export class ChordAudioEngine {
 
   /**
    * Builds the studio signal processing chain:
-   * Input -> Highpass (55Hz sub-cut) -> Low-Shelf (135Hz mud-cut) -> Warm Mid Presence
-   * -> Dry/Wet Studio Room Convolution Reverb -> Master Compressor/Limiter -> Destination
+   * Input -> Highpass (55Hz sub-cut) -> Low-Shelf (140Hz mud-cut) -> Soundboard Warmth (580Hz)
+   * -> Master Gentle Lowpass (2550Hz to tame upper pitches) -> Dry/Wet Room Reverb -> Compressor -> Destination
    */
   private buildMasterSignalChain(ctx: AudioContext) {
     this.masterInput = ctx.createGain();
@@ -386,16 +463,22 @@ export class ChordAudioEngine {
     const mudLowShelf = ctx.createBiquadFilter();
     mudLowShelf.type = 'lowshelf';
     mudLowShelf.frequency.setValueAtTime(140, ctx.currentTime);
-    mudLowShelf.gain.setValueAtTime(-3.8, ctx.currentTime);
+    mudLowShelf.gain.setValueAtTime(-3.6, ctx.currentTime);
 
-    // 3. Gentle high-mid warmth & articulation presence
-    const presenceFilter = ctx.createBiquadFilter();
-    presenceFilter.type = 'peaking';
-    presenceFilter.frequency.setValueAtTime(2200, ctx.currentTime);
-    presenceFilter.Q.setValueAtTime(0.85, ctx.currentTime);
-    presenceFilter.gain.setValueAtTime(1.2, ctx.currentTime);
+    // 3. Acoustic Piano Soundboard Body Warmth (580 Hz gentle resonance)
+    const bodyWarmthFilter = ctx.createBiquadFilter();
+    bodyWarmthFilter.type = 'peaking';
+    bodyWarmthFilter.frequency.setValueAtTime(580, ctx.currentTime);
+    bodyWarmthFilter.Q.setValueAtTime(0.75, ctx.currentTime);
+    bodyWarmthFilter.gain.setValueAtTime(0.85, ctx.currentTime);
 
-    // 4. Master Dynamics Compressor / Limiter for uniform level across 3-note to 6-note chords
+    // 4. Master Gentle Low-Pass Filter to keep higher pitches warm & never piercing
+    const masterLowpass = ctx.createBiquadFilter();
+    masterLowpass.type = 'lowpass';
+    masterLowpass.frequency.setValueAtTime(2550, ctx.currentTime);
+    masterLowpass.Q.setValueAtTime(0.62, ctx.currentTime);
+
+    // 5. Master Dynamics Compressor / Limiter for uniform level across chords
     this.masterCompressor = ctx.createDynamicsCompressor();
     this.masterCompressor.threshold.setValueAtTime(-16, ctx.currentTime);
     this.masterCompressor.knee.setValueAtTime(10, ctx.currentTime);
@@ -403,25 +486,26 @@ export class ChordAudioEngine {
     this.masterCompressor.attack.setValueAtTime(0.004, ctx.currentTime);
     this.masterCompressor.release.setValueAtTime(0.22, ctx.currentTime);
 
-    // 5. Algorithmic / Convolution Stereo Room Reverb
+    // 6. Algorithmic / Convolution Stereo Room Reverb
     const dryGain = ctx.createGain();
-    dryGain.gain.setValueAtTime(0.84, ctx.currentTime);
+    dryGain.gain.setValueAtTime(0.85, ctx.currentTime);
 
     const wetGain = ctx.createGain();
-    wetGain.gain.setValueAtTime(0.2, ctx.currentTime);
+    wetGain.gain.setValueAtTime(0.22, ctx.currentTime);
 
     const convolver = ctx.createConvolver();
-    convolver.buffer = this.createRoomImpulseBuffer(ctx, 1.65, 3.2);
+    convolver.buffer = this.createRoomImpulseBuffer(ctx, 2.1, 3.0);
 
     // Connect graph
     this.masterInput.connect(subHighpass);
     subHighpass.connect(mudLowShelf);
-    mudLowShelf.connect(presenceFilter);
+    mudLowShelf.connect(bodyWarmthFilter);
+    bodyWarmthFilter.connect(masterLowpass);
 
-    presenceFilter.connect(dryGain);
+    masterLowpass.connect(dryGain);
     dryGain.connect(this.masterCompressor);
 
-    presenceFilter.connect(convolver);
+    masterLowpass.connect(convolver);
     convolver.connect(wetGain);
     wetGain.connect(this.masterCompressor);
 
@@ -458,12 +542,13 @@ export class ChordAudioEngine {
   }
 
   /**
-   * Releases any currently sounding notes smoothly (prevents mud when switching chords quickly).
+   * Releases any currently sounding notes with a smooth, musical half-damper tail
+   * so chords blend naturally without hard cut-offs or low-end mud.
    */
   private releaseActiveVoicesAt(releaseTime: number) {
     const remaining: ActiveVoiceNodes[] = [];
     for (const v of this.activeVoices) {
-      if (v.stopTime > releaseTime + 0.04) {
+      if (v.stopTime > releaseTime + 0.05) {
         v.forceRelease(releaseTime);
       }
     }
@@ -472,15 +557,17 @@ export class ChordAudioEngine {
 
   /**
    * Synthesizes a single polyphonic voice with:
-   * - Subtle random detuning (±3 to 8 cents) + slow LFO pitch drift
-   * - Velocity variation & voice-count gain normalization
-   * - Warm E-Piano / Acoustic Plucked string-key hybrid timbre
-   * - Smooth click-free ADSR envelope (15ms attack, 380ms release)
+   * - Piano-like individual voice distinction (tight unison tuning, subtle keyboard stereo spread,
+   *   and delicate felt-hammer 2nd-harmonic articulation)
+   * - Pitch-scaled gain and progressive per-voice low-pass filtering so higher pitches stay warm
+   *   and never cut through harshly
+   * - Musical 2-stage natural decay (unified for quarter/half notes, extended for whole-measure chords)
    */
   private scheduleSingleVoice(
     midi: number,
     startTime: number,
-    holdDuration: number,
+    isWholeMeasure: boolean,
+    measureDurationSec: number,
     isBass: boolean,
     velocity: number,
     normalizationFactor: number
@@ -489,66 +576,123 @@ export class ChordAudioEngine {
     if (!this.masterInput) return;
 
     const freq = midiToFreq(midi);
-    const attackSec = isBass ? 0.014 : 0.016;
-    const releaseSec = isBass ? 0.42 : 0.38;
-    const totalDuration = Math.max(holdDuration + releaseSec, attackSec + 0.25);
-    const stopTime = startTime + totalDuration + 0.03;
+    const attackSec = isBass ? 0.013 : 0.014;
 
-    // 1. Primary Warm Oscillator (Triangle for bass body, Sine/Triangle hybrid for upper harmony)
+    // Musical decay profiling:
+    // - Quarter & Half notes share the exact same natural, unhurried decay curve (~2.6s audible ring)
+    // - Whole-measure chords sustain with a fuller harmonic bloom and longer decay (~4.2s+ audible ring)
+    const bloomWindow = isWholeMeasure ? 0.50 : 0.34;
+    const bloomTargetLevel = isWholeMeasure ? 0.70 : 0.60;
+    const bloomTau = isWholeMeasure ? 0.30 : 0.22;
+
+    const wholeBarSustainSec = isWholeMeasure
+      ? Math.max(1.85, measureDurationSec * 0.82)
+      : 0;
+    const singingDecayTau = isWholeMeasure
+      ? (isBass ? 0.78 : 0.72)
+      : (isBass ? 0.60 : 0.55);
+
+    const naturalRingDuration = isWholeMeasure
+      ? attackSec + wholeBarSustainSec + singingDecayTau * 5.2
+      : attackSec + bloomWindow + singingDecayTau * 5.2;
+
+    const stopTime = startTime + naturalRingDuration + 0.15;
+
+    // 1. Primary Fundamental Oscillator (Triangle for bass warmth, pure Sine for clear upper voice fundamental)
     const oscFundamental = ctx.createOscillator();
     oscFundamental.type = isBass ? 'triangle' : 'sine';
     oscFundamental.frequency.setValueAtTime(freq, startTime);
 
-    // 2. Harmonic Body Oscillator with subtle fine detune (±3 to 8 cents)
+    // 2. Piano Unison String Oscillator (tight ±1.8 cent tuning instead of wide synth chorus so voices stay distinct)
     const oscWarmHarmonic = ctx.createOscillator();
     oscWarmHarmonic.type = 'triangle';
     oscWarmHarmonic.frequency.setValueAtTime(freq, startTime);
-    const randomDetuneCents = (Math.random() * 10 - 5) + (isBass ? -2 : 3.5);
-    oscWarmHarmonic.detune.setValueAtTime(randomDetuneCents, startTime);
-    oscFundamental.detune.setValueAtTime(-randomDetuneCents * 0.4, startTime);
+    const unisonDetuneCents = (Math.random() * 2.4 - 1.2) + (isBass ? -1.0 : 1.4);
+    oscWarmHarmonic.detune.setValueAtTime(unisonDetuneCents, startTime);
+    oscFundamental.detune.setValueAtTime(-unisonDetuneCents * 0.35, startTime);
 
-    // 3. Soft Plucked / Rhodes Tine Attack Harmonic (decays quickly for natural articulation)
+    // 3. Acoustic Piano 2nd-Harmonic Overtone (gives clear piano-key distinction during initial bloom without harshness)
     const oscTransient = ctx.createOscillator();
     oscTransient.type = 'sine';
-    oscTransient.frequency.setValueAtTime(freq * (isBass ? 2 : 3), startTime);
+    oscTransient.frequency.setValueAtTime(freq * 2, startTime);
 
-    // 4. Slow LFO Pitch Drift (±3.5 cents organic drift)
+    // 4. Ultra-subtle organic pitch stability (0.8 cents slow drift)
     const lfo = ctx.createOscillator();
     const lfoGain = ctx.createGain();
     lfo.type = 'sine';
-    lfo.frequency.setValueAtTime(0.38 + Math.random() * 0.3, startTime);
-    lfoGain.gain.setValueAtTime(3.5, startTime);
+    lfo.frequency.setValueAtTime(0.35 + Math.random() * 0.25, startTime);
+    lfoGain.gain.setValueAtTime(0.8, startTime);
     lfo.connect(lfoGain);
     lfoGain.connect(oscWarmHarmonic.detune);
+
+    // Pitch-dependent level scaling (Fletcher-Munson compensation so higher notes never poke out)
+    const highPitchAttenuation =
+      !isBass && midi > 55 ? Math.pow(0.962, midi - 55) : 1.0;
 
     // Mix gains per oscillator
     const gainFund = ctx.createGain();
     const gainHarm = ctx.createGain();
     const gainTrans = ctx.createGain();
 
-    const baseLevel = (isBass ? 0.42 : 0.28) * velocity * normalizationFactor;
+    const baseLevel =
+      (isBass ? 0.42 : 0.29) *
+      highPitchAttenuation *
+      velocity *
+      normalizationFactor;
     gainFund.gain.setValueAtTime(baseLevel, startTime);
-    gainHarm.gain.setValueAtTime(baseLevel * (isBass ? 0.38 : 0.46), startTime);
+    // Slightly less triangle upper-harmonic weight on higher MIDI notes for a rounder treble
+    const harmRatio = isBass
+      ? 0.36
+      : Math.max(0.24, 0.42 - Math.max(0, midi - 55) * 0.01);
+    gainHarm.gain.setValueAtTime(baseLevel * harmRatio, startTime);
 
-    // Pluck/tine transient envelope
-    gainTrans.gain.setValueAtTime(baseLevel * (isBass ? 0.14 : 0.18), startTime);
-    gainTrans.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.085);
+    // Subtle felt-hammer 2nd harmonic key-strike articulation (decays smoothly over ~140ms)
+    const overtoneLevel = isBass
+      ? 0.14
+      : Math.max(0.07, 0.15 - Math.max(0, midi - 55) * 0.005);
+    gainTrans.gain.setValueAtTime(baseLevel * overtoneLevel, startTime);
+    gainTrans.gain.setTargetAtTime(0.0001, startTime + attackSec, 0.085);
 
-    // Dynamic lowpass filter per voice (simulates acoustic string/hammer brightness decay)
+    // Per-voice low-pass filter with progressive roll-off on higher pitches:
+    // Keeps lower/mid voices articulate like individual piano strings while gently rounding higher pitches
     const voiceFilter = ctx.createBiquadFilter();
     voiceFilter.type = 'lowpass';
-    const baseCutoff = isBass ? 520 : Math.min(3400, Math.max(1100, freq * 3.6));
-    const peakCutoff = Math.min(6500, baseCutoff * (1.7 + velocity * 0.5));
-    voiceFilter.frequency.setValueAtTime(peakCutoff, startTime);
-    voiceFilter.frequency.exponentialRampToValueAtTime(baseCutoff, startTime + 0.32);
+    voiceFilter.Q.setValueAtTime(0.7, startTime);
 
-    // Click-free ADSR Voice Envelope
+    const harmonicMult = Math.max(1.85, 3.15 - Math.max(0, midi - 53) * 0.075);
+    const baseCutoff = isBass
+      ? Math.min(540, freq * 3.8)
+      : Math.min(1550, Math.max(680, freq * harmonicMult));
+    const hammerCutoff = Math.min(
+      isBass ? 980 : 2150,
+      baseCutoff * (1.38 + velocity * 0.18)
+    );
+
+    voiceFilter.frequency.setValueAtTime(hammerCutoff, startTime);
+    // Quick 45ms felt-hammer rebound into warm sustain tone
+    voiceFilter.frequency.setTargetAtTime(baseCutoff, startTime + attackSec, 0.045);
+    voiceFilter.frequency.setTargetAtTime(
+      baseCutoff * 0.68,
+      startTime + attackSec + bloomWindow,
+      isWholeMeasure ? 1.4 : 0.9
+    );
+
+    // Click-free Multi-Stage Natural Exponential Decay Envelope (no hard gate cut-off)
     const envGain = ctx.createGain();
     envGain.gain.setValueAtTime(0.0001, startTime);
     envGain.gain.linearRampToValueAtTime(1.0, startTime + attackSec);
-    envGain.gain.exponentialRampToValueAtTime(0.62, startTime + attackSec + 0.28);
-    envGain.gain.exponentialRampToValueAtTime(0.32, startTime + holdDuration);
-    envGain.gain.exponentialRampToValueAtTime(0.0001, startTime + holdDuration + releaseSec);
+    // Stage 1: Initial attack bloom settling into singing body
+    envGain.gain.setTargetAtTime(bloomTargetLevel, startTime + attackSec, bloomTau);
+
+    if (isWholeMeasure) {
+      // Whole-measure chord: gentle singing sustain across the measure, then warm extended release tail
+      const measureSustainTau = Math.max(1.1, measureDurationSec * 0.58);
+      envGain.gain.setTargetAtTime(0.28, startTime + attackSec + bloomWindow, measureSustainTau);
+      envGain.gain.setTargetAtTime(0.00001, startTime + attackSec + wholeBarSustainSec, singingDecayTau);
+    } else {
+      // Quarter note or Half note: unified, pleasant natural decay into silence
+      envGain.gain.setTargetAtTime(0.00001, startTime + attackSec + bloomWindow, singingDecayTau);
+    }
 
     oscFundamental.connect(gainFund);
     oscWarmHarmonic.connect(gainHarm);
@@ -559,7 +703,18 @@ export class ChordAudioEngine {
     gainTrans.connect(voiceFilter);
 
     voiceFilter.connect(envGain);
-    envGain.connect(this.masterInput);
+
+    // Subtle acoustic piano stereo perspective (bass slightly left, treble slightly right)
+    // Gives spatial separation and clarity to individual voices within a chord
+    if (typeof ctx.createStereoPanner === 'function') {
+      const panner = ctx.createStereoPanner();
+      const panPos = Math.max(-0.22, Math.min(0.22, (midi - 55) * 0.011));
+      panner.pan.setValueAtTime(panPos, startTime);
+      envGain.connect(panner);
+      panner.connect(this.masterInput);
+    } else {
+      envGain.connect(this.masterInput);
+    }
 
     oscFundamental.start(startTime);
     oscWarmHarmonic.start(startTime);
@@ -579,10 +734,10 @@ export class ChordAudioEngine {
         released = true;
         try {
           const t = Math.max(now, ctx.currentTime);
-          envGain.gain.cancelScheduledValues(t);
-          envGain.gain.setValueAtTime(Math.max(0.0002, envGain.gain.value || 0.2), t);
-          envGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.14);
-          const earlyStop = t + 0.16;
+          // Smooth damper release using setTargetAtTime (seamless transition from current scheduled curve without jump)
+          const damperTau = isBass ? 0.16 : 0.30;
+          envGain.gain.setTargetAtTime(0.00001, t + 0.01, damperTau);
+          const earlyStop = t + damperTau * 4.8 + 0.08;
           if (earlyStop < stopTime) {
             oscFundamental.stop(earlyStop);
             oscWarmHarmonic.stop(earlyStop);
@@ -602,15 +757,20 @@ export class ChordAudioEngine {
   public scheduleChordAtTime(
     chordSymbol: string,
     startTime: number,
-    durationSec: number,
+    beats = 2,
     strumDirection: 'down' | 'up' = 'down',
     accentMultiplier = 1.0
   ) {
-    const voicing = computeSmartVoicing(chordSymbol, this.lastUpperVoices);
+    const voicing = computeSmartVoicing(chordSymbol, this.lastUpperVoices, this.lastBassMidi);
     this.lastUpperVoices = voicing.upperMidis;
+    this.lastBassMidi = voicing.bassMidi;
 
-    // Fade out any overlapping prior chord voices cleanly at startTime
+    // Gently half-pedal / release prior chord voices as the new chord enters
     this.releaseActiveVoicesAt(startTime);
+
+    const secPerBeat = 60 / this.bpm;
+    const isWholeMeasure = beats >= this.meter;
+    const measureDurationSec = Math.max(this.meter, beats) * secPerBeat;
 
     const numVoices = voicing.allMidis.length;
     // Gain normalization so 5-6 note jazz chords match 3-note triads in loudness
@@ -630,7 +790,7 @@ export class ChordAudioEngine {
             ...[...voicing.upperMidis].reverse().map(m => ({ midi: m, isBass: false }))
           ];
 
-    // Staggered strumming micro-delay (16ms - 24ms between consecutive strings/voices)
+    // Staggered strumming micro-delay (15ms - 19ms between consecutive strings/voices)
     const baseStaggerSec = strumDirection === 'down' ? 0.019 : 0.015;
 
     orderedVoices.forEach((voice, idx) => {
@@ -647,7 +807,8 @@ export class ChordAudioEngine {
       this.scheduleSingleVoice(
         voice.midi,
         noteStart,
-        Math.max(0.22, durationSec - noteOffset),
+        isWholeMeasure,
+        measureDurationSec,
         voice.isBass,
         velocity,
         normalizationFactor
@@ -657,17 +818,18 @@ export class ChordAudioEngine {
 
   /**
    * Immediately plays a single chord (when tapping a chord in the UI).
+   * Quarter notes (1 beat) and half notes (2 beats) share the same decay;
+   * whole-measure chords (beats >= meter) receive the extended whole-measure decay.
    */
-  public playSingleChord(chordSymbol: string, beats = 2) {
+  public playSingleChord(chordSymbol: string, beats = 2, meter?: number) {
     if (!chordSymbol) return;
+    if (meter) this.meter = meter;
     if (this.isPlaying) {
       this.stop();
     }
     const ctx = this.ensureContext();
-    const secPerBeat = 60 / this.bpm;
-    const durationSec = Math.min(3.2, Math.max(0.75, beats * secPerBeat * 0.92));
     const direction: 'down' | 'up' = this.strumCounter++ % 2 === 0 ? 'down' : 'up';
-    this.scheduleChordAtTime(chordSymbol, ctx.currentTime + 0.005, durationSec, direction, 1.0);
+    this.scheduleChordAtTime(chordSymbol, ctx.currentTime + 0.005, beats, direction, 1.0);
   }
 
   /**
@@ -718,6 +880,7 @@ export class ChordAudioEngine {
 
     this.clearTimers();
     this.lastUpperVoices = null; // Fresh voice-leading anchor at start of progression
+    this.lastBassMidi = null;
     this.currentStepIndex = 0;
     this.isPlaying = true;
     this.nextStepTime = ctx.currentTime + 0.025;
@@ -756,10 +919,10 @@ export class ChordAudioEngine {
         if (this.isLooping && this.steps.length > 0) {
           this.currentStepIndex = 0;
         } else {
-          // Schedule transport stop right when the final chord finishes
+          // Let the final chord ring out naturally while resetting transport UI when the measure completes
           const stopDelayMs = Math.max(0, (this.nextStepTime - this.ctx.currentTime) * 1000);
           const endTimer = setTimeout(() => {
-            this.stop();
+            this.stop(false);
           }, stopDelayMs);
           this.uiTimers.push(endTimer);
           if (this.schedulerTimer) {
@@ -783,7 +946,7 @@ export class ChordAudioEngine {
       this.scheduleChordAtTime(
         step.chord,
         playTime,
-        stepDurationSec * 0.94,
+        step.beats,
         strumDir,
         accent
       );
@@ -804,10 +967,10 @@ export class ChordAudioEngine {
     }
   }
 
-  public stop() {
+  public stop(dampVoices = true) {
     this.isPlaying = false;
     this.clearTimers();
-    if (this.ctx) {
+    if (dampVoices && this.ctx) {
       this.releaseActiveVoicesAt(this.ctx.currentTime);
     }
     if (this.onHighlightCallback) {

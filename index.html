@@ -22,7 +22,7 @@
   <body class="bg-slate-50 dark:bg-[#030d17] text-slate-900 dark:text-[#f8fafc] h-[100dvh] max-h-[100dvh] overflow-hidden flex flex-col antialiased selection:bg-sky-500 selection:text-white dark:selection:bg-[#38bdf8] dark:selection:text-slate-900 transition-colors duration-200">
 
     <!-- TOP MINIMAL HEADER -->
-    <header class="shrink-0 z-30 bg-slate-50 dark:bg-[#030d17] px-4 py-3 flex items-center justify-between max-w-lg mx-auto w-full transition-colors relative">
+    <header class="shrink-0 z-30 bg-slate-50 dark:bg-[#030d17] px-4 py-3 flex items-center justify-between max-w-lg mx-auto w-full transition-colors">
       <!-- Save Current Progression Button -->
       <button id="saveCurrentProgBtn" type="button" onclick="window.ReharmEngine.toggleSaveCurrentProgression()" class="p-2 rounded-[6px] text-slate-500 hover:text-sky-600 dark:text-[#38bdf8]/70 dark:hover:text-[#38bdf8] transition-colors cursor-pointer" title="Save Progression">
         <span id="saveProgIcon">
@@ -30,36 +30,11 @@
         </span>
       </button>
 
-      <!-- Right Controls: Audio Transport + PWA Install + Dark Mode Toggle -->
-      <div class="flex items-center gap-1 relative">
-        <!-- Minimal Audio Transport Controls -->
-        <div id="transportControls" class="flex items-center gap-1 mr-0.5">
-          <button id="playProgBtn" type="button" onclick="window.ReharmEngine.togglePlayback()" class="p-2 rounded-[6px] text-slate-500 hover:text-sky-600 dark:text-[#38bdf8]/70 dark:hover:text-[#38bdf8] transition-colors cursor-pointer" title="Play / Stop Progression">
-            <span id="playProgIcon">
-              <svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-            </span>
-          </button>
-
-          <button id="bpmToggleBtn" type="button" onclick="window.ReharmEngine.toggleBpmPopover(event)" class="px-2 py-1 rounded-[6px] font-mono-tabular font-bold text-[11px] text-slate-500 hover:text-sky-600 dark:text-[#38bdf8]/70 dark:hover:text-[#38bdf8] transition-colors cursor-pointer select-none" title="Tempo & Loop">
-            <span id="bpmBadgeText">104</span>
-          </button>
-        </div>
-
-        <!-- Floating Minimal BPM & Loop Popover -->
-        <div id="bpmPopover" onclick="event.stopPropagation()" class="hidden absolute top-full right-8 mt-1.5 z-50 w-52 bg-white dark:bg-[#071d2c] border border-slate-200 dark:border-[#38bdf8]/40 rounded-[10px] shadow-xl p-3 flex flex-col gap-2.5">
-          <div class="flex items-center justify-between text-xs font-mono-tabular font-bold text-slate-700 dark:text-[#f8fafc]">
-            <span id="bpmPopoverValue">104 BPM</span>
-            <button id="loopToggleBtn" type="button" onclick="window.ReharmEngine.toggleLoop()" class="p-1.5 rounded-[6px] bg-sky-500/15 text-sky-600 dark:bg-[#0c4a6e] dark:text-[#38bdf8] transition-colors cursor-pointer" title="Toggle Loop">
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg>
-            </button>
-          </div>
-          <input id="bpmRangeInput" type="range" min="60" max="200" step="2" value="104" oninput="window.ReharmEngine.setBpm(this.value)" class="w-full accent-sky-600 dark:accent-[#38bdf8] cursor-pointer h-1.5 bg-slate-200 dark:bg-[#030d17] rounded-lg" />
-        </div>
-
+      <!-- Right Controls: PWA Install + Dark Mode Toggle -->
+      <div class="flex items-center gap-1">
         <button id="pwaInstallBtn" type="button" onclick="window.ReharmEngine.triggerPWAInstall()" class="hidden p-2 rounded-[6px] text-slate-500 hover:text-sky-600 dark:text-[#38bdf8]/70 dark:hover:text-[#38bdf8] transition-colors cursor-pointer" title="Install App">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
         </button>
-
         <button type="button" onclick="window.ReharmEngine.toggleTheme()" class="p-2 rounded-[6px] text-slate-500 hover:text-slate-900 dark:text-[#38bdf8]/70 dark:hover:text-white transition-colors cursor-pointer" title="Toggle Light/Dark Theme">
           <span id="themeIcon">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
@@ -80,28 +55,46 @@
             <!-- Populated dynamically -->
           </div>
 
-          <!-- 2. CONTROL SECTION (2 ROWS: OPTIONS + REHARM + RANDOMIZE ABOVE, FULL-WIDTH INPUT BELOW) -->
+          <!-- 2. CONTROL SECTION (3 ROWS: TRANSPORT BAR ABOVE, OPTIONS + REHARM + RANDOMIZE MIDDLE, FULL-WIDTH INPUT BELOW) -->
           <div class="flex flex-col gap-2 w-full mt-auto pt-3 border-t border-slate-200/90 dark:border-[#0c4a6e]/50 shrink-0 relative">
-            
-            <!-- FLOATING CARD FOR REHARM SET SELECTION (OPENED ON 0.25-SECOND HOLD OF REHARM BUTTON) -->
-            <div id="reharmSetPopover" class="hidden absolute bottom-full left-1/4 -translate-x-1/4 mb-2 z-50 w-44 bg-white dark:bg-[#071d2c] border border-slate-300 dark:border-[#38bdf8]/50 rounded-[10px] shadow-xl p-1.5 flex flex-col gap-1">
-              <button type="button" id="setBtnBasic" onclick="window.ReharmEngine.selectReharmSet('basic')" class="w-full px-3 py-2 rounded-[7px] flex items-center justify-between text-xs font-mono-tabular font-extrabold transition-colors cursor-pointer">
-                <span>Basic</span>
-                <span class="text-[11px] opacity-80">V⁷</span>
-              </button>
-              <button type="button" id="setBtnDark" onclick="window.ReharmEngine.selectReharmSet('dark')" class="w-full px-3 py-2 rounded-[7px] flex items-center justify-between text-xs font-mono-tabular font-extrabold transition-colors cursor-pointer">
-                <span>Dark</span>
-                <span class="text-[11px] opacity-80">♭vi</span>
-              </button>
-            </div>
 
-            <!-- FLOATING DROPDOWN FOR REHARM CATEGORY / TECHNIQUE SELECTION (OPENED ON TAP OF REHARM BUTTON) -->
-            <div id="reharmTechniquePopover" class="hidden absolute bottom-full left-0 sm:left-1/4 sm:-translate-x-1/4 mb-2 z-50 w-64 max-h-64 overflow-y-auto no-scrollbar bg-white dark:bg-[#071d2c] border border-slate-300 dark:border-[#38bdf8]/50 rounded-[10px] shadow-2xl p-1.5 flex flex-col gap-1">
-              <!-- Populated dynamically -->
+            <!-- ROW 0: DEDICATED TRANSPORT BAR (PLAY/STOP + TEMPO SLIDER + BPM + LOOP) -->
+            <div id="transportControls" class="w-full flex items-center bg-white dark:bg-[#071d2c] border border-slate-300/90 dark:border-[#0c4a6e]/70 rounded-[8px] shadow-sm overflow-hidden">
+              <button id="playProgBtn" type="button" onclick="window.ReharmEngine.togglePlayback()" class="px-3.5 py-2.5 text-slate-900 dark:text-white hover:text-sky-600 dark:hover:text-[#38bdf8] hover:bg-slate-100 dark:hover:bg-[#0c4a6e]/40 border-r border-slate-200 dark:border-[#0c4a6e]/60 shrink-0 cursor-pointer active:scale-95 transition-all flex items-center justify-center" title="Play / Stop">
+                <span id="playProgIcon" class="flex items-center justify-center">
+                  <svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                </span>
+              </button>
+
+              <div class="flex-1 flex items-center gap-2.5 px-3 py-2 min-w-0">
+                <input id="bpmRangeInput" type="range" min="60" max="200" step="2" value="104" oninput="window.ReharmEngine.setBpm(this.value)" class="flex-1 min-w-0 accent-sky-600 dark:accent-[#38bdf8] cursor-pointer h-1.5 bg-slate-200 dark:bg-[#030d17] rounded-lg" title="Tempo (BPM)" />
+                <span id="bpmBadgeText" class="font-mono-tabular font-black text-[12px] text-slate-700 dark:text-[#f8fafc] w-7 text-right shrink-0 select-none">104</span>
+              </div>
+
+              <button id="loopToggleBtn" type="button" onclick="window.ReharmEngine.toggleLoop()" class="px-3.5 py-2.5 border-l border-slate-200 dark:border-[#0c4a6e]/60 shrink-0 cursor-pointer active:scale-95 transition-all flex items-center justify-center text-sky-600 dark:text-[#38bdf8] bg-sky-500/10 dark:bg-[#0c4a6e]/60" title="Toggle Loop">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg>
+              </button>
             </div>
 
             <!-- ROW 1: OPTIONS (25%) + REHARM TECHNIQUE (25%) + RANDOMIZE (50%) -->
-            <div class="grid grid-cols-4 gap-2 w-full">
+            <div class="grid grid-cols-4 gap-2 w-full relative">
+              <!-- FLOATING CARD FOR REHARM SET SELECTION (OPENED ON 0.25-SECOND HOLD OF REHARM BUTTON) -->
+              <div id="reharmSetPopover" class="hidden absolute bottom-full left-1/4 -translate-x-1/4 mb-2 z-50 w-44 bg-white dark:bg-[#071d2c] border border-slate-300 dark:border-[#38bdf8]/50 rounded-[10px] shadow-xl p-1.5 flex flex-col gap-1">
+                <button type="button" id="setBtnBasic" onclick="window.ReharmEngine.selectReharmSet('basic')" class="w-full px-3 py-2 rounded-[7px] flex items-center justify-between text-xs font-mono-tabular font-extrabold transition-colors cursor-pointer">
+                  <span>Basic</span>
+                  <span class="text-[11px] opacity-80">V⁷</span>
+                </button>
+                <button type="button" id="setBtnDark" onclick="window.ReharmEngine.selectReharmSet('dark')" class="w-full px-3 py-2 rounded-[7px] flex items-center justify-between text-xs font-mono-tabular font-extrabold transition-colors cursor-pointer">
+                  <span>Dark</span>
+                  <span class="text-[11px] opacity-80">♭vi</span>
+                </button>
+              </div>
+
+              <!-- FLOATING DROPDOWN FOR REHARM CATEGORY / TECHNIQUE SELECTION (OPENED ON TAP OF REHARM BUTTON) -->
+              <div id="reharmTechniquePopover" class="hidden absolute bottom-full left-0 sm:left-1/4 sm:-translate-x-1/4 mb-2 z-50 w-64 max-h-64 overflow-y-auto no-scrollbar bg-white dark:bg-[#071d2c] border border-slate-300 dark:border-[#38bdf8]/50 rounded-[10px] shadow-2xl p-1.5 flex flex-col gap-1">
+                <!-- Populated dynamically -->
+              </div>
+
               <!-- OPTIONS BUTTON -->
               <button type="button" onclick="window.ReharmEngine.openPresetsModal()" class="col-span-1 py-3 px-2 bg-white dark:bg-[#071d2c] hover:bg-slate-50 dark:hover:bg-[#0c4a6e]/50 border border-slate-300/90 dark:border-[#0c4a6e]/70 rounded-[8px] text-slate-800 dark:text-[#f8fafc] focus:outline-none cursor-pointer shadow-sm flex items-center justify-center transition-all active:scale-95" title="Options">
                 <svg class="w-[18px] h-[18px] text-sky-600 dark:text-[#38bdf8]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
@@ -123,7 +116,7 @@
             <!-- ROW 2: FULL WIDTH INPUT FIELD WITH INTEGRATED MINIMAL METER & SYMBOL KEYS -->
             <div class="w-full flex items-center bg-white dark:bg-[#071d2c] border border-slate-300/90 dark:border-[#0c4a6e]/70 rounded-[8px] focus-within:ring-2 focus-within:ring-sky-500/40 dark:focus-within:ring-[#38bdf8]/40 shadow-sm overflow-hidden">
               <button type="button" onclick="window.ReharmEngine.toggleMeter()" id="meterToggleBtn" class="px-2.5 py-3.5 font-mono-tabular font-black text-[13px] text-sky-600 dark:text-[#38bdf8] hover:bg-slate-100 dark:hover:bg-[#0c4a6e]/40 border-r border-slate-200 dark:border-[#0c4a6e]/60 shrink-0 cursor-pointer active:scale-95 transition-all select-none" title="Toggle 3/4 or 4/4">4/4</button>
-              <input id="singleProgInput" type="text" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" oninput="window.ReharmEngine.handleInputChange()" placeholder="Dm7 | G7 | Cmaj7" class="flex-1 min-w-0 py-3.5 px-2.5 bg-transparent text-[14px] font-mono-tabular font-extrabold text-slate-900 dark:text-[#f8fafc] placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none text-center truncate" />
+              <input id="singleProgInput" type="text" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" oninput="window.ReharmEngine.handleInputChange()" placeholder="Dm7 | G7 | Cmaj7 | Cmaj7" class="flex-1 min-w-0 py-3.5 px-2.5 bg-transparent text-[14px] font-mono-tabular font-extrabold text-slate-900 dark:text-[#f8fafc] placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none text-center truncate" />
               <div class="flex items-center border-l border-slate-200 dark:border-[#0c4a6e]/60 shrink-0">
                 <button type="button" onmousedown="event.preventDefault()" onclick="window.ReharmEngine.insertInputSymbol('/')" class="px-2.5 py-3.5 font-mono-tabular font-black text-[14px] text-slate-600 dark:text-slate-300 hover:text-sky-600 dark:hover:text-[#38bdf8] hover:bg-slate-100 dark:hover:bg-[#0c4a6e]/40 cursor-pointer active:scale-90 transition-all select-none" title="Insert /">/</button>
                 <button type="button" onmousedown="event.preventDefault()" onclick="window.ReharmEngine.insertInputSymbol('|')" class="px-2.5 py-3.5 font-mono-tabular font-black text-[14px] text-slate-600 dark:text-slate-300 hover:text-sky-600 dark:hover:text-[#38bdf8] hover:bg-slate-100 dark:hover:bg-[#0c4a6e]/40 border-l border-slate-200 dark:border-[#0c4a6e]/40 cursor-pointer active:scale-90 transition-all select-none" title="Insert |">|</button>
@@ -144,7 +137,7 @@
           <!-- BOTTOM INPUT BAR TO TYPE & SAVE PROGRESSIONS DIRECTLY ON SAVED SCREEN -->
           <div class="flex flex-col gap-2 w-full mt-auto pt-3 border-t border-slate-200/90 dark:border-[#0c4a6e]/50 shrink-0">
             <div class="w-full flex items-center bg-white dark:bg-[#071d2c] border border-slate-300/90 dark:border-[#0c4a6e]/70 rounded-[8px] focus-within:ring-2 focus-within:ring-sky-500/40 dark:focus-within:ring-[#38bdf8]/40 shadow-sm overflow-hidden">
-              <input id="savedProgInput" type="text" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" oninput="window.ReharmEngine.handleModalInputFormat(this)" onkeydown="if(event.key === 'Enter') window.ReharmEngine.addSavedProgressionFromInput()" placeholder="Dm7 | G7 | Cmaj7" class="flex-1 min-w-0 py-3.5 px-3 bg-transparent text-[14px] font-mono-tabular font-extrabold text-slate-900 dark:text-[#f8fafc] placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none text-center truncate" />
+              <input id="savedProgInput" type="text" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" oninput="window.ReharmEngine.handleModalInputFormat(this)" onkeydown="if(event.key === 'Enter') window.ReharmEngine.addSavedProgressionFromInput()" placeholder="Dm7 | G7 | Cmaj7 | Cmaj7" class="flex-1 min-w-0 py-3.5 px-3 bg-transparent text-[14px] font-mono-tabular font-extrabold text-slate-900 dark:text-[#f8fafc] placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none text-center truncate" />
               <div class="flex items-center border-l border-slate-200 dark:border-[#0c4a6e]/60 shrink-0">
                 <button type="button" onmousedown="event.preventDefault()" onclick="window.ReharmEngine.insertSavedInputSymbol('/')" class="px-2.5 py-3.5 font-mono-tabular font-black text-[14px] text-slate-600 dark:text-slate-300 hover:text-sky-600 dark:hover:text-[#38bdf8] hover:bg-slate-100 dark:hover:bg-[#0c4a6e]/40 cursor-pointer active:scale-90 transition-all select-none" title="Insert /">/</button>
                 <button type="button" onmousedown="event.preventDefault()" onclick="window.ReharmEngine.insertSavedInputSymbol('|')" class="px-2.5 py-3.5 font-mono-tabular font-black text-[14px] text-slate-600 dark:text-slate-300 hover:text-sky-600 dark:hover:text-[#38bdf8] hover:bg-slate-100 dark:hover:bg-[#0c4a6e]/40 border-l border-slate-200 dark:border-[#0c4a6e]/40 cursor-pointer active:scale-90 transition-all select-none" title="Insert |">|</button>
@@ -166,7 +159,7 @@
         
         <!-- Add New Base Progression Input + Minimal Icon Controls -->
         <div class="flex items-center gap-2 w-full">
-          <input id="newBaseProgInput" type="text" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" oninput="window.ReharmEngine.handleModalInputFormat(this)" onkeydown="if(event.key === 'Enter') window.ReharmEngine.addBaseProgression()" placeholder="Dm7 | G7 | Cmaj7" class="flex-1 py-2.5 px-3 bg-slate-50 dark:bg-[#030d17] border border-slate-300 dark:border-[#0c4a6e] rounded-[8px] text-xs font-mono-tabular font-bold text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500/40 dark:focus:ring-[#38bdf8]/40" />
+          <input id="newBaseProgInput" type="text" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" oninput="window.ReharmEngine.handleModalInputFormat(this)" onkeydown="if(event.key === 'Enter') window.ReharmEngine.addBaseProgression()" placeholder="Dm7 | G7 | Cmaj7 | Cmaj7" class="flex-1 py-2.5 px-3 bg-slate-50 dark:bg-[#030d17] border border-slate-300 dark:border-[#0c4a6e] rounded-[8px] text-xs font-mono-tabular font-bold text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500/40 dark:focus:ring-[#38bdf8]/40" />
           <button type="button" onclick="window.ReharmEngine.addBaseProgression()" class="p-2.5 bg-sky-600 hover:bg-sky-700 dark:bg-[#0c4a6e] dark:hover:bg-[#073652] text-white dark:text-[#38bdf8] rounded-[8px] border border-sky-700/20 dark:border-[#38bdf8]/30 shrink-0 cursor-pointer transition-colors" title="Add Progression">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
           </button>

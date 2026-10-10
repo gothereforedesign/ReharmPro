@@ -1119,47 +1119,70 @@ export class TargetBackwardEngine {
 }
 
 const DEFAULT_PROGRESSIONS = [
-  "Dm7 | G7 | Cmaj7",
-  "Gm7(b5) | C7alt | Fm7",
+  "Dm7 | G7 | Cmaj7 | Cmaj7",
+  "Gm7(b5) | C7alt | Fm7 | Fm7",
   "Bbmaj7 | Gm7 | Cm7 | F7",
-  "F7 | Bb7 | Ebmaj7",
-  "Am7 | Ab7 | Gmaj7",
+  "F7 | Bb7 | Ebmaj7 | Ebmaj7",
+  "Am7 | Ab7 | Gmaj7 | Gmaj7",
   "Em7 | A7 | Dm7 | G7",
   "Bbmaj7 | Ebmaj7",
-  "Abmaj7 | Abm7 | Ebmaj7",
+  "Abmaj7 | Abm7 | Ebmaj7 | Ebmaj7",
   "Cmaj7 | D7 | Dm7 | G7",
-  "Fmaj7 | A7 | Dm7",
+  "Fmaj7 | A7 | Dm7 | Dm7",
   "Bb7 | Eb7 | Bb7 | Bb7 | Eb7 | Eb7 | Bb7 | G7 | Cm7 | F7 | Bb7 | F7",
   "Fmaj7 | Em7(b5) | A7 | Dm7 | G7 | Cm7 | F7 | Bbmaj7 | Bbm7 | Eb7 | Am7 | D7 | Gm7 | C7 | Fmaj7 | D7 | Gm7 | C7",
   "Cmaj7 | Am7 | Dm7 | G7 | Em7 | A7 | Dm7 | G7 | Gm7 | C7 | Fmaj7 | Fm7 | Em7 | A7 | Dm7 | G7",
-  "Cm7 | F7 | Gmaj7",
+  "Cm7 | F7 | Gmaj7 | Gmaj7",
   "Am7 | G7 | F7 | E7",
   "Gm | Gm(maj7) | Gm7 | Gm6",
-  "Cmaj7 | Eb7 | Abmaj7 | B7 | Emaj7 | G7 | Cmaj7",
-  "Dm7 | G7 | Cmaj7 | Cm7 | F7 | Bbmaj7 | Bbm7 | Eb7 | Abmaj7",
+  "Cmaj7 | Eb7 | Abmaj7 | B7 | Emaj7 | G7 | Cmaj7 | Cmaj7",
+  "Dm7 | G7 | Cmaj7 | Cm7 | F7 | Bbmaj7 | Bbm7 | Eb7 | Abmaj7 | Abmaj7",
   "Dm7 | Em7",
-  "Fmaj7 | F#dim7 | Gm7 | G#dim7 | Am7"
+  "Fmaj7 | F#dim7 | Gm7 | G#dim7 | Am7 | Am7"
 ];
 
 const DEFAULT_SAVED_PROGRESSIONS = [
-  "Em | F | Em",
+  "Em | F | Em | Em",
   "Em | F | B7 | C",
   "B7 | Em | F/A | B | C | B",
-  "Cm | Ebm | Cm",
-  "Cm | Abm | Cm",
-  "Cm | Dm7b5/C | Em | Fm | G7",
+  "Cm | Ebm | Cm | Cm",
+  "Cm | Abm | Cm | Cm",
+  "Cm | Dm7b5/C | Em | Fm | G7 | G7",
   "Gm | Bbm | Abm | Em | Bm | Gm | Bm | Gm",
-  "Dm | Fm | C | Ebm | G | Em | C#m",
+  "Dm | Fm | C | Ebm | G | Em | C#m | C#m",
   "Cm | Ebm | F | Bbm",
-  "Cm | F | Cm",
-  "Cm | Dm | Cm",
+  "Cm | F | Cm | Cm",
+  "Cm | Dm | Cm | Cm",
   "Dm | Dbm | C | Bbm | Am | A7",
   "Cm | Ab | Fm | G",
   "C | Em | C | Em",
-  "Dm | Dm(maj7) | Dm7 | Dm6 | C#°7",
+  "Dm | Dm(maj7) | Dm7 | Dm6 | C#°7 | C#°7",
   "Cm | Eb+ | Fm | G",
   "Dm | G#"
 ];
+
+// Maps only legacy odd-measure default progressions to their even-measure versions
+// so existing browser vaults upgrade built-in defaults while leaving user-added progressions untouched.
+const LEGACY_DEFAULT_ODD_TO_EVEN_MAP: Record<string, string> = {
+  "Dm7 | G7 | Cmaj7": "Dm7 | G7 | Cmaj7 | Cmaj7",
+  "Gm7(b5) | C7alt | Fm7": "Gm7(b5) | C7alt | Fm7 | Fm7",
+  "F7 | Bb7 | Ebmaj7": "F7 | Bb7 | Ebmaj7 | Ebmaj7",
+  "Am7 | Ab7 | Gmaj7": "Am7 | Ab7 | Gmaj7 | Gmaj7",
+  "Abmaj7 | Abm7 | Ebmaj7": "Abmaj7 | Abm7 | Ebmaj7 | Ebmaj7",
+  "Fmaj7 | A7 | Dm7": "Fmaj7 | A7 | Dm7 | Dm7",
+  "Cm7 | F7 | Gmaj7": "Cm7 | F7 | Gmaj7 | Gmaj7",
+  "Cmaj7 | Eb7 | Abmaj7 | B7 | Emaj7 | G7 | Cmaj7": "Cmaj7 | Eb7 | Abmaj7 | B7 | Emaj7 | G7 | Cmaj7 | Cmaj7",
+  "Dm7 | G7 | Cmaj7 | Cm7 | F7 | Bbmaj7 | Bbm7 | Eb7 | Abmaj7": "Dm7 | G7 | Cmaj7 | Cm7 | F7 | Bbmaj7 | Bbm7 | Eb7 | Abmaj7 | Abmaj7",
+  "Fmaj7 | F#dim7 | Gm7 | G#dim7 | Am7": "Fmaj7 | F#dim7 | Gm7 | G#dim7 | Am7 | Am7",
+  "Em | F | Em": "Em | F | Em | Em",
+  "Cm | Ebm | Cm": "Cm | Ebm | Cm | Cm",
+  "Cm | Abm | Cm": "Cm | Abm | Cm | Cm",
+  "Cm | Dm7b5/C | Em | Fm | G7": "Cm | Dm7b5/C | Em | Fm | G7 | G7",
+  "Dm | Fm | C | Ebm | G | Em | C#m": "Dm | Fm | C | Ebm | G | Em | C#m | C#m",
+  "Cm | F | Cm": "Cm | F | Cm | Cm",
+  "Cm | Dm | Cm": "Cm | Dm | Cm | Cm",
+  "Dm | Dm(maj7) | Dm7 | Dm6 | C#°7": "Dm | Dm(maj7) | Dm7 | Dm6 | C#°7 | C#°7"
+};
 
 // ============================================================================
 // 3-LAYER SELF-HEALING PERSISTENT STORAGE VAULT
@@ -1286,30 +1309,28 @@ function updateTransportUI(isPlaying = audioEngine.getIsPlaying()) {
   const playBtn = document.getElementById('playProgBtn');
   const playIcon = document.getElementById('playProgIcon');
   const bpmBadge = document.getElementById('bpmBadgeText');
-  const bpmPopoverVal = document.getElementById('bpmPopoverValue');
   const bpmRange = document.getElementById('bpmRangeInput') as HTMLInputElement | null;
   const loopBtn = document.getElementById('loopToggleBtn');
 
   if (playBtn && playIcon) {
     if (isPlaying) {
-      playBtn.classList.add('text-sky-600', 'dark:text-[#38bdf8]', 'bg-sky-500/10', 'dark:bg-[#0c4a6e]/60');
+      playBtn.className = 'px-3.5 py-2.5 border-r border-slate-200 dark:border-[#0c4a6e]/60 shrink-0 cursor-pointer active:scale-95 transition-all flex items-center justify-center text-sky-600 dark:text-[#38bdf8] bg-sky-500/10 dark:bg-[#0c4a6e]/60';
       playIcon.innerHTML = `<svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>`;
     } else {
-      playBtn.classList.remove('text-sky-600', 'dark:text-[#38bdf8]', 'bg-sky-500/10', 'dark:bg-[#0c4a6e]/60');
+      playBtn.className = 'px-3.5 py-2.5 border-r border-slate-200 dark:border-[#0c4a6e]/60 shrink-0 cursor-pointer active:scale-95 transition-all flex items-center justify-center text-slate-900 dark:text-white hover:text-sky-600 dark:hover:text-[#38bdf8] hover:bg-slate-100 dark:hover:bg-[#0c4a6e]/40';
       playIcon.innerHTML = `<svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`;
     }
   }
 
   const bpm = audioEngine.getBpm();
   if (bpmBadge) bpmBadge.textContent = String(bpm);
-  if (bpmPopoverVal) bpmPopoverVal.textContent = `${bpm} BPM`;
   if (bpmRange && Number(bpmRange.value) !== bpm) bpmRange.value = String(bpm);
 
   if (loopBtn) {
     if (audioEngine.getIsLooping()) {
-      loopBtn.className = 'p-1.5 rounded-[6px] bg-sky-600 text-white dark:bg-[#0c4a6e] dark:text-[#38bdf8] transition-colors cursor-pointer';
+      loopBtn.className = 'px-3.5 py-2.5 border-l border-slate-200 dark:border-[#0c4a6e]/60 shrink-0 cursor-pointer active:scale-95 transition-all flex items-center justify-center text-sky-600 dark:text-[#38bdf8] bg-sky-500/10 dark:bg-[#0c4a6e]/60';
     } else {
-      loopBtn.className = 'p-1.5 rounded-[6px] text-slate-400 hover:text-slate-700 dark:text-slate-500 dark:hover:text-slate-300 transition-colors cursor-pointer';
+      loopBtn.className = 'px-3.5 py-2.5 border-l border-slate-200 dark:border-[#0c4a6e]/60 shrink-0 cursor-pointer active:scale-95 transition-all flex items-center justify-center text-slate-400 hover:text-slate-700 dark:text-slate-500 dark:hover:text-slate-300';
     }
   }
 }
@@ -1394,6 +1415,11 @@ function normalizeProgressionString(rawStr: string): string {
   return cleanedBars.join(' | ');
 }
 
+function migrateLegacyDefaultProgression(rawStr: string): string {
+  const norm = normalizeProgressionString(rawStr);
+  return LEGACY_DEFAULT_ODD_TO_EVEN_MAP[norm] || norm;
+}
+
 function loadInitialVaultSync(): VaultPayload {
   const defaultPayload: VaultPayload = {
     updatedAt: 0,
@@ -1420,10 +1446,10 @@ function loadInitialVaultSync(): VaultPayload {
           updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : Date.now(),
           theme: parsed.theme === 'light' ? 'light' : 'dark',
           savedSections: {
-            basic: parsed.savedSections.basic.map(p => normalizeProgressionString(String(p))).filter(Boolean),
-            dark: parsed.savedSections.dark.map(p => normalizeProgressionString(String(p))).filter(Boolean)
+            basic: parsed.savedSections.basic.map(p => migrateLegacyDefaultProgression(String(p))).filter(Boolean),
+            dark: parsed.savedSections.dark.map(p => migrateLegacyDefaultProgression(String(p))).filter(Boolean)
           },
-          baseProgressionsPool: parsed.baseProgressionsPool.map(p => normalizeProgressionString(String(p))).filter(Boolean)
+          baseProgressionsPool: parsed.baseProgressionsPool.map(p => migrateLegacyDefaultProgression(String(p))).filter(Boolean)
         };
       }
     }
@@ -1436,15 +1462,15 @@ function loadInitialVaultSync(): VaultPayload {
         const pSaved = JSON.parse(legacySaved);
         if (pSaved && Array.isArray(pSaved.basic) && Array.isArray(pSaved.dark)) {
           defaultPayload.savedSections = {
-            basic: pSaved.basic.map((p: unknown) => normalizeProgressionString(String(p))).filter(Boolean),
-            dark: pSaved.dark.map((p: unknown) => normalizeProgressionString(String(p))).filter(Boolean)
+            basic: pSaved.basic.map((p: unknown) => migrateLegacyDefaultProgression(String(p))).filter(Boolean),
+            dark: pSaved.dark.map((p: unknown) => migrateLegacyDefaultProgression(String(p))).filter(Boolean)
           };
         }
       }
       if (legacyPool) {
         const pPool = JSON.parse(legacyPool);
         if (Array.isArray(pPool) && pPool.length > 0) {
-          defaultPayload.baseProgressionsPool = pPool.map((p: unknown) => normalizeProgressionString(String(p))).filter(Boolean);
+          defaultPayload.baseProgressionsPool = pPool.map((p: unknown) => migrateLegacyDefaultProgression(String(p))).filter(Boolean);
         }
       }
       defaultPayload.updatedAt = Date.now();
@@ -1543,10 +1569,10 @@ async function syncAndHealVault() {
     state.vaultUpdatedAt = newest.updatedAt;
     state.theme = newest.theme === 'light' ? 'light' : 'dark';
     state.savedSections = {
-      basic: newest.savedSections.basic.map(p => normalizeProgressionString(String(p))).filter(Boolean),
-      dark: newest.savedSections.dark.map(p => normalizeProgressionString(String(p))).filter(Boolean)
+      basic: newest.savedSections.basic.map(p => migrateLegacyDefaultProgression(String(p))).filter(Boolean),
+      dark: newest.savedSections.dark.map(p => migrateLegacyDefaultProgression(String(p))).filter(Boolean)
     };
-    state.baseProgressionsPool = newest.baseProgressionsPool.map(p => normalizeProgressionString(String(p))).filter(Boolean);
+    state.baseProgressionsPool = newest.baseProgressionsPool.map(p => migrateLegacyDefaultProgression(String(p))).filter(Boolean);
     if (!state.userChangedBaseProgression && state.baseProgressionsPool.length > 0) {
       state.baseProgression = state.baseProgressionsPool[0];
       const input = document.getElementById('singleProgInput') as HTMLInputElement | null;
@@ -2365,18 +2391,12 @@ function setupInteractions() {
     const insideWrapper = wrapper && target && wrapper.contains(target);
     const insideSet = setPopover && target && setPopover.contains(target);
     const insideTech = techPopover && target && techPopover.contains(target);
-    const bpmPopover = document.getElementById('bpmPopover');
-    const bpmToggleBtn = document.getElementById('bpmToggleBtn');
-    const insideBpm = (bpmPopover && target && bpmPopover.contains(target)) || (bpmToggleBtn && target && bpmToggleBtn.contains(target));
 
     if (!insideWrapper && !insideSet && setPopover && !setPopover.classList.contains('hidden')) {
       setPopover.classList.add('hidden');
     }
     if (!insideWrapper && !insideTech && techPopover && !techPopover.classList.contains('hidden')) {
       techPopover.classList.add('hidden');
-    }
-    if (!insideBpm && bpmPopover && !bpmPopover.classList.contains('hidden')) {
-      bpmPopover.classList.add('hidden');
     }
   });
 
@@ -2392,7 +2412,7 @@ function setupInteractions() {
     const iosModal = document.getElementById('iosInstallModal');
     if (iosModal && !iosModal.classList.contains('hidden')) return;
     const el = target as Element | null;
-    if (el && el.closest && el.closest('input, select, textarea, #reharmSetPopover, #reharmTechniquePopover, #reharmBtnWrapper, #bpmPopover')) return;
+    if (el && el.closest && el.closest('input, select, textarea, #reharmSetPopover, #reharmTechniquePopover, #reharmBtnWrapper, #transportControls')) return;
     swipeStartX = x;
     swipeStartY = y;
     swipeLastX = x;
@@ -2570,9 +2590,6 @@ const ReharmEngine = {
     state.currentScreen = screenName === 'saved' ? 'saved' : 'generator';
     const track = document.getElementById('screenTrack');
     const saveBtn = document.getElementById('saveCurrentProgBtn');
-    const transportControls = document.getElementById('transportControls');
-    const bpmPopover = document.getElementById('bpmPopover');
-    if (bpmPopover) bpmPopover.classList.add('hidden');
 
     if (state.currentScreen === 'saved') {
       if (audioEngine.getIsPlaying()) {
@@ -2583,7 +2600,6 @@ const ReharmEngine = {
         track.classList.add('-translate-x-1/2');
       }
       if (saveBtn) saveBtn.classList.add('invisible');
-      if (transportControls) transportControls.classList.add('invisible');
       renderSavedProgressionsList();
     } else {
       if (track) {
@@ -2591,7 +2607,6 @@ const ReharmEngine = {
         track.classList.add('translate-x-0');
       }
       if (saveBtn) saveBtn.classList.remove('invisible');
-      if (transportControls) transportControls.classList.remove('invisible');
       renderOutput();
     }
   },
@@ -3006,7 +3021,7 @@ const ReharmEngine = {
     if (Date.now() < justSwipedUntil) return;
     if (!chordStr) return;
     const chord = chordStr.split('→')[0].trim();
-    audioEngine.playSingleChord(chord, beats);
+    audioEngine.playSingleChord(chord, beats, state.meter);
   },
 
   toggleTheme() {
