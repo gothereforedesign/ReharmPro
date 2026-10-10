@@ -1,8 +1,21 @@
 import './index.css';
-import { registerSW } from 'virtual:pwa-register';
+import { audioEngine } from './audioEngine';
 
-// Register Service Worker for offline standalone PWA operation
-registerSW({ immediate: true });
+// Safely register Service Worker in production builds; in dev, clear any stale dev SW
+if ('serviceWorker' in navigator) {
+  if (import.meta.env.PROD) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
+    });
+  } else {
+    navigator.serviceWorker
+      .getRegistrations()
+      .then(regs => {
+        regs.forEach(r => r.unregister());
+      })
+      .catch(() => {});
+  }
+}
 
 interface ChordBeatItem {
   chord: string;
@@ -1240,161 +1253,77 @@ async function writeVaultToCache(payload: VaultPayload): Promise<void> {
 }
 
 // ============================================================================
-// AUDIO ENGINE
+// AUDIO TRANSPORT & REAL-TIME HIGHLIGHT HELPERS
 // ============================================================================
-let audioCtx: AudioContext | null = null;
-let masterCompressor: DynamicsCompressorNode | null = null;
-
-function getAudioContext(): AudioContext {
-  if (!audioCtx) {
-    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    audioCtx = new AudioCtx();
-
-    masterCompressor = audioCtx.createDynamicsCompressor();
-    masterCompressor.threshold.setValueAtTime(-18, audioCtx.currentTime);
-    masterCompressor.knee.setValueAtTime(12, audioCtx.currentTime);
-    masterCompressor.ratio.setValueAtTime(4, audioCtx.currentTime);
-    masterCompressor.attack.setValueAtTime(0.005, audioCtx.currentTime);
-    masterCompressor.release.setValueAtTime(0.25, audioCtx.currentTime);
-
-    masterCompressor.connect(audioCtx.destination);
-  }
-  if (audioCtx.state === 'suspended') {
-    audioCtx.resume();
-  }
-  return audioCtx;
-}
-
-function getNotePitch(noteName: string, octave = 4): number {
-  const clean = noteName.replace(/maj|m|min|dim|aug|7|9|11|13|alt|sus/gi, '').trim();
-  let idx = PITCH_TO_NOTE_SHARP.indexOf(clean);
-  if (idx === -1) idx = PITCH_TO_NOTE_FLAT.indexOf(clean);
-  if (idx === -1) idx = 0;
-  return 12 + octave * 12 + idx;
-}
-
-function pitchToFreq(midiPitch: number): number {
-  return 440 * Math.pow(2, (midiPitch - 69) / 12);
-}
-
-function getChordVoicingPitches(chordStr: string): number[] {
-  if (!chordStr) return [60, 64, 67];
-
-  const parts = chordStr.split('/');
-  const mainPart = parts[0].trim();
-  const rawBass = parts.length > 1 ? parts[1].trim() : null;
-  const bassPart = rawBass ? rawBass.replace(/^([a-g])/, (_, c: string) => c.toUpperCase()) : null;
-
-  const rootMatch = mainPart.match(/^([a-gA-G][#b]?)(.*)$/);
-  if (!rootMatch) return [60, 64, 67];
-
-  const rootName = rootMatch[1].charAt(0).toUpperCase() + rootMatch[1].slice(1);
-  const quality = rootMatch[2];
-  const qualityLower = quality.toLowerCase();
-
-  const rootPitch3 = getNotePitch(rootName, 3);
-  const pitches: number[] = [];
-
-  if (bassPart) {
-    pitches.push(getNotePitch(bassPart, 2));
-  } else {
-    pitches.push(getNotePitch(rootName, 2));
-  }
-
-  const isFullDim = quality.includes('°') || qualityLower.includes('dim7');
-  const isHalfDim = quality.includes('ø') || qualityLower.includes('m7b5') || qualityLower.includes('m7(b5)');
-  const isMinor = (qualityLower.startsWith('m') && !qualityLower.startsWith('maj')) || isHalfDim || isFullDim;
-  const isDim = isFullDim || isHalfDim || qualityLower.includes('dim');
-  const isAug = qualityLower.includes('aug') || quality.includes('+') || qualityLower.includes('alt');
-
-  pitches.push(rootPitch3 + (isDim || isMinor ? 3 : 4));
-
-  if (isDim) {
-    pitches.push(rootPitch3 + 6);
-  } else if (isAug) {
-    pitches.push(rootPitch3 + 8);
-  } else if (!qualityLower.includes('b5')) {
-    pitches.push(rootPitch3 + 7);
-  }
-
-  if (quality.includes('Δ') || qualityLower.includes('maj7')) {
-    pitches.push(rootPitch3 + 11);
-  } else if (isFullDim) {
-    pitches.push(rootPitch3 + 9);
-  } else if (isHalfDim || qualityLower.includes('7') || qualityLower.includes('9') || qualityLower.includes('11') || qualityLower.includes('13')) {
-    pitches.push(rootPitch3 + 10);
-  } else if (qualityLower === '6' || qualityLower === 'm6') {
-    pitches.push(rootPitch3 + 9);
-  }
-
-  if (qualityLower.includes('b9') || quality.includes('♭9')) {
-    pitches.push(rootPitch3 + 13);
-  } else if (qualityLower.includes('#9') || qualityLower.includes('alt')) {
-    pitches.push(rootPitch3 + 15);
-  } else if (qualityLower.includes('9') || qualityLower.includes('add2')) {
-    pitches.push(rootPitch3 + 14);
-  }
-
-  return pitches;
-}
-
-function playToneVoice(freq: number, startTime: number, duration = 1.6, isBass = false) {
-  const ctx = getAudioContext();
-  if (!masterCompressor) return;
-
-  const oscMain = ctx.createOscillator();
-  oscMain.type = isBass ? 'triangle' : 'sine';
-  oscMain.frequency.setValueAtTime(freq, startTime);
-
-  const oscBody = ctx.createOscillator();
-  oscBody.type = 'triangle';
-  oscBody.frequency.setValueAtTime(freq * 1.0015, startTime);
-
-  const gainMain = ctx.createGain();
-  const gainBody = ctx.createGain();
-  const voiceGain = ctx.createGain();
-
-  const baseVolume = isBass ? 0.35 : 0.22;
-  gainMain.gain.setValueAtTime(baseVolume, startTime);
-  gainBody.gain.setValueAtTime(baseVolume * 0.4, startTime);
-
-  const filter = ctx.createBiquadFilter();
-  filter.type = 'lowpass';
-  const cutoffFreq = isBass ? 600 : 1800;
-  filter.frequency.setValueAtTime(cutoffFreq * 1.8, startTime);
-  filter.frequency.exponentialRampToValueAtTime(cutoffFreq, startTime + 0.35);
-
-  voiceGain.gain.setValueAtTime(0.0001, startTime);
-  voiceGain.gain.linearRampToValueAtTime(0.32, startTime + 0.015);
-  voiceGain.gain.exponentialRampToValueAtTime(0.18, startTime + 0.3);
-  voiceGain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
-
-  oscMain.connect(gainMain);
-  oscBody.connect(gainBody);
-
-  gainMain.connect(filter);
-  gainBody.connect(filter);
-
-  filter.connect(voiceGain);
-  voiceGain.connect(masterCompressor);
-
-  oscMain.start(startTime);
-  oscBody.start(startTime);
-
-  oscMain.stop(startTime + duration);
-  oscBody.stop(startTime + duration);
-}
-
-function playChord(notePitches: number[], beats = 4) {
-  const ctx = getAudioContext();
-  const now = ctx.currentTime;
-  const duration = Math.min(4.0, Math.max(0.8, beats * 0.45));
-
-  notePitches.forEach((pitch, idx) => {
-    const freq = pitchToFreq(pitch);
-    const microStrumDelay = idx * 0.018;
-    playToneVoice(freq, now + microStrumDelay, duration, idx === 0);
+function highlightPlayingStep(measureIdx: number | null, chordIdx: number | null) {
+  const allMeasureBoxes = document.querySelectorAll<HTMLElement>('[data-measure-box]');
+  allMeasureBoxes.forEach(box => {
+    const mIdx = Number(box.getAttribute('data-measure-box'));
+    if (measureIdx !== null && mIdx === measureIdx) {
+      box.classList.add('border-sky-500', 'dark:border-[#38bdf8]', 'ring-1', 'ring-sky-500/40', 'dark:ring-[#38bdf8]/40');
+      box.classList.remove('border-slate-300', 'dark:border-[#0c4a6e]');
+    } else {
+      box.classList.remove('border-sky-500', 'dark:border-[#38bdf8]', 'ring-1', 'ring-sky-500/40', 'dark:ring-[#38bdf8]/40');
+      box.classList.add('border-slate-300', 'dark:border-[#0c4a6e]');
+    }
   });
+
+  const allChordSpans = document.querySelectorAll<HTMLElement>('[data-chord-token]');
+  allChordSpans.forEach(span => {
+    const mIdx = Number(span.getAttribute('data-measure-idx'));
+    const cIdx = Number(span.getAttribute('data-chord-idx'));
+    if (measureIdx !== null && chordIdx !== null && mIdx === measureIdx && cIdx === chordIdx) {
+      span.classList.add('text-sky-600', 'dark:text-[#38bdf8]', 'scale-105');
+      span.classList.remove('text-slate-900', 'dark:text-white');
+    } else {
+      span.classList.remove('text-sky-600', 'dark:text-[#38bdf8]', 'scale-105');
+      span.classList.add('text-slate-900', 'dark:text-white');
+    }
+  });
+}
+
+function updateTransportUI(isPlaying = audioEngine.getIsPlaying()) {
+  const playBtn = document.getElementById('playProgBtn');
+  const playIcon = document.getElementById('playProgIcon');
+  const bpmBadge = document.getElementById('bpmBadgeText');
+  const bpmPopoverVal = document.getElementById('bpmPopoverValue');
+  const bpmRange = document.getElementById('bpmRangeInput') as HTMLInputElement | null;
+  const loopBtn = document.getElementById('loopToggleBtn');
+
+  if (playBtn && playIcon) {
+    if (isPlaying) {
+      playBtn.classList.add('text-sky-600', 'dark:text-[#38bdf8]', 'bg-sky-500/10', 'dark:bg-[#0c4a6e]/60');
+      playIcon.innerHTML = `<svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>`;
+    } else {
+      playBtn.classList.remove('text-sky-600', 'dark:text-[#38bdf8]', 'bg-sky-500/10', 'dark:bg-[#0c4a6e]/60');
+      playIcon.innerHTML = `<svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`;
+    }
+  }
+
+  const bpm = audioEngine.getBpm();
+  if (bpmBadge) bpmBadge.textContent = String(bpm);
+  if (bpmPopoverVal) bpmPopoverVal.textContent = `${bpm} BPM`;
+  if (bpmRange && Number(bpmRange.value) !== bpm) bpmRange.value = String(bpm);
+
+  if (loopBtn) {
+    if (audioEngine.getIsLooping()) {
+      loopBtn.className = 'p-1.5 rounded-[6px] bg-sky-600 text-white dark:bg-[#0c4a6e] dark:text-[#38bdf8] transition-colors cursor-pointer';
+    } else {
+      loopBtn.className = 'p-1.5 rounded-[6px] text-slate-400 hover:text-slate-700 dark:text-slate-500 dark:hover:text-slate-300 transition-colors cursor-pointer';
+    }
+  }
+}
+
+function getDisplayedMeasures(): ChordBeatItem[][] {
+  const baseMeasures = parseInputByMeasures(state.baseProgression);
+  if (!baseMeasures || baseMeasures.length === 0) return [];
+  return state.reharmActive && state.selectedTechnique !== 'default'
+    ? TargetBackwardEngine.executeReharm(
+        baseMeasures,
+        state.selectedTechnique,
+        state.selectedStrategy
+      )
+    : baseMeasures;
 }
 
 // ============================================================================
@@ -2025,10 +1954,14 @@ function renderOutput() {
   state.lastFormattedOutput = formatMeasuresToString(displayedMeasures);
   updateSaveButtonUI();
 
+  if (audioEngine.getIsPlaying()) {
+    audioEngine.updatePlayingMeasures(displayedMeasures, state.meter);
+  }
+
   const measureEntries = displayedMeasures.map((measChords, mIdx) => {
-    const mList: { type: 'chord' | 'slash'; val: string; beats?: number; measureIdx: number }[] = [];
-    measChords.forEach(item => {
-      mList.push({ type: 'chord', val: item.chord, beats: item.beats, measureIdx: mIdx });
+    const mList: { type: 'chord' | 'slash'; val: string; beats?: number; measureIdx: number; chordIdx?: number }[] = [];
+    measChords.forEach((item, cIdx) => {
+      mList.push({ type: 'chord', val: item.chord, beats: item.beats, measureIdx: mIdx, chordIdx: cIdx });
       for (let i = 1; i < item.beats; i++) {
         mList.push({ type: 'slash', val: '/', measureIdx: mIdx });
       }
@@ -2045,18 +1978,19 @@ function renderOutput() {
     .map(rowMeasures => {
       const measBoxesHtml = rowMeasures
         .map(measTokens => {
+          const mIdx = measTokens[0]?.measureIdx ?? 0;
           const measContent = measTokens
             .map(tok => {
               if (tok.type === 'slash') {
                 return `<span class="text-slate-400 dark:text-[#38bdf8]/60 font-mono-tabular text-xl sm:text-3xl font-bold select-none">/</span>`;
               }
               const formattedName = formatChordHtml(tok.val);
-              return `<span onclick="window.ReharmEngine.playChordString('${tok.val}', ${tok.beats || 2})" class="text-2xl sm:text-3xl font-black font-mono-tabular tracking-tight text-slate-900 dark:text-white hover:text-sky-600 dark:hover:text-[#38bdf8] transition-colors cursor-pointer active:scale-95 select-none">${formattedName}</span>`;
+              return `<span data-chord-token="1" data-measure-idx="${tok.measureIdx}" data-chord-idx="${tok.chordIdx ?? 0}" onclick="window.ReharmEngine.playChordString('${tok.val}', ${tok.beats || 2})" class="text-2xl sm:text-3xl font-black font-mono-tabular tracking-tight text-slate-900 dark:text-white hover:text-sky-600 dark:hover:text-[#38bdf8] transition-all duration-150 cursor-pointer active:scale-95 select-none inline-block">${formattedName}</span>`;
             })
             .join(' ');
 
           return `
-            <div class="flex items-center justify-center px-3 py-3 sm:px-4 sm:py-4 bg-white dark:bg-[#071d2c] border border-slate-300 dark:border-[#0c4a6e] rounded-[10px] shadow-sm w-full">
+            <div data-measure-box="${mIdx}" class="flex items-center justify-center px-3 py-3 sm:px-4 sm:py-4 bg-white dark:bg-[#071d2c] border border-slate-300 dark:border-[#0c4a6e] rounded-[10px] shadow-sm w-full transition-all duration-150">
               <div class="flex-1 flex items-center justify-between gap-2 text-left">
                 ${measContent}
               </div>
@@ -2431,12 +2365,18 @@ function setupInteractions() {
     const insideWrapper = wrapper && target && wrapper.contains(target);
     const insideSet = setPopover && target && setPopover.contains(target);
     const insideTech = techPopover && target && techPopover.contains(target);
+    const bpmPopover = document.getElementById('bpmPopover');
+    const bpmToggleBtn = document.getElementById('bpmToggleBtn');
+    const insideBpm = (bpmPopover && target && bpmPopover.contains(target)) || (bpmToggleBtn && target && bpmToggleBtn.contains(target));
 
     if (!insideWrapper && !insideSet && setPopover && !setPopover.classList.contains('hidden')) {
       setPopover.classList.add('hidden');
     }
     if (!insideWrapper && !insideTech && techPopover && !techPopover.classList.contains('hidden')) {
       techPopover.classList.add('hidden');
+    }
+    if (!insideBpm && bpmPopover && !bpmPopover.classList.contains('hidden')) {
+      bpmPopover.classList.add('hidden');
     }
   });
 
@@ -2452,7 +2392,7 @@ function setupInteractions() {
     const iosModal = document.getElementById('iosInstallModal');
     if (iosModal && !iosModal.classList.contains('hidden')) return;
     const el = target as Element | null;
-    if (el && el.closest && el.closest('input, select, textarea, #reharmSetPopover, #reharmTechniquePopover, #reharmBtnWrapper')) return;
+    if (el && el.closest && el.closest('input, select, textarea, #reharmSetPopover, #reharmTechniquePopover, #reharmBtnWrapper, #bpmPopover')) return;
     swipeStartX = x;
     swipeStartY = y;
     swipeLastX = x;
@@ -2562,11 +2502,48 @@ const ReharmEngine = {
     syncDefaultProgressionInputUI();
     updateReharmSetUI();
     updateMeterBadgeUI();
+    updateTransportUI(false);
     setupInteractions();
     setupPWAInstallUI();
     renderOutput();
     renderSavedProgressionsList();
     syncAndHealVault();
+  },
+
+  togglePlayback() {
+    if (audioEngine.getIsPlaying()) {
+      audioEngine.stop();
+      return;
+    }
+    const measures = getDisplayedMeasures();
+    if (measures.length === 0) return;
+    audioEngine.startProgression(measures, {
+      meter: state.meter,
+      onHighlight: (mIdx, cIdx) => highlightPlayingStep(mIdx, cIdx),
+      onStateChange: (playing) => updateTransportUI(playing)
+    });
+  },
+
+  toggleBpmPopover(e?: Event) {
+    if (e) e.stopPropagation();
+    const pop = document.getElementById('bpmPopover');
+    if (pop) {
+      updateTransportUI();
+      pop.classList.toggle('hidden');
+    }
+  },
+
+  setBpm(val: string | number) {
+    const num = typeof val === 'number' ? val : parseInt(val, 10);
+    if (!isNaN(num)) {
+      audioEngine.setBpm(num);
+      updateTransportUI();
+    }
+  },
+
+  toggleLoop() {
+    audioEngine.setIsLooping(!audioEngine.getIsLooping());
+    updateTransportUI();
   },
 
   async triggerPWAInstall() {
@@ -2593,13 +2570,20 @@ const ReharmEngine = {
     state.currentScreen = screenName === 'saved' ? 'saved' : 'generator';
     const track = document.getElementById('screenTrack');
     const saveBtn = document.getElementById('saveCurrentProgBtn');
+    const transportControls = document.getElementById('transportControls');
+    const bpmPopover = document.getElementById('bpmPopover');
+    if (bpmPopover) bpmPopover.classList.add('hidden');
 
     if (state.currentScreen === 'saved') {
+      if (audioEngine.getIsPlaying()) {
+        audioEngine.stop();
+      }
       if (track) {
         track.classList.remove('translate-x-0');
         track.classList.add('-translate-x-1/2');
       }
       if (saveBtn) saveBtn.classList.add('invisible');
+      if (transportControls) transportControls.classList.add('invisible');
       renderSavedProgressionsList();
     } else {
       if (track) {
@@ -2607,6 +2591,7 @@ const ReharmEngine = {
         track.classList.add('translate-x-0');
       }
       if (saveBtn) saveBtn.classList.remove('invisible');
+      if (transportControls) transportControls.classList.remove('invisible');
       renderOutput();
     }
   },
@@ -3017,12 +3002,11 @@ const ReharmEngine = {
     renderOutput();
   },
 
-  playChordString(chordStr: string, beats = 4) {
+  playChordString(chordStr: string, beats = 2) {
     if (Date.now() < justSwipedUntil) return;
     if (!chordStr) return;
     const chord = chordStr.split('→')[0].trim();
-    const pitches = getChordVoicingPitches(chord);
-    playChord(pitches, beats);
+    audioEngine.playSingleChord(chord, beats);
   },
 
   toggleTheme() {

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" class="dark bg-slate-100 dark:bg-[#030d17]">
+<html lang="en" class="dark bg-slate-50 dark:bg-[#030d17]">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover" />
@@ -17,25 +17,50 @@
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <link rel="shortcut icon" href="/favicon.ico" />
+    <link rel="stylesheet" href="/src/index.css" />
   </head>
-  <body class="bg-slate-100 dark:bg-[#030d17] text-slate-900 dark:text-[#f8fafc] h-[100dvh] max-h-[100dvh] overflow-hidden flex flex-col antialiased selection:bg-sky-500 selection:text-white dark:selection:bg-[#38bdf8] dark:selection:text-slate-900 transition-colors duration-200">
+  <body class="bg-slate-50 dark:bg-[#030d17] text-slate-900 dark:text-[#f8fafc] h-[100dvh] max-h-[100dvh] overflow-hidden flex flex-col antialiased selection:bg-sky-500 selection:text-white dark:selection:bg-[#38bdf8] dark:selection:text-slate-900 transition-colors duration-200">
 
     <!-- TOP MINIMAL HEADER -->
-    <header class="shrink-0 z-30 bg-slate-100 dark:bg-[#030d17] px-4 py-3 flex items-center justify-between max-w-lg mx-auto w-full transition-colors">
+    <header class="shrink-0 z-30 bg-slate-50 dark:bg-[#030d17] px-4 py-3 flex items-center justify-between max-w-lg mx-auto w-full transition-colors relative">
       <!-- Save Current Progression Button -->
-      <button id="saveCurrentProgBtn" type="button" onclick="window.ReharmEngine.toggleSaveCurrentProgression()" class="p-2 rounded-[6px] text-slate-600 hover:text-sky-600 dark:text-slate-400 dark:hover:text-[#38bdf8] transition-colors cursor-pointer" title="Save Progression">
+      <button id="saveCurrentProgBtn" type="button" onclick="window.ReharmEngine.toggleSaveCurrentProgression()" class="p-2 rounded-[6px] text-slate-500 hover:text-sky-600 dark:text-[#38bdf8]/70 dark:hover:text-[#38bdf8] transition-colors cursor-pointer" title="Save Progression">
         <span id="saveProgIcon">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>
         </span>
       </button>
 
-      <!-- Right Controls: PWA Install Button (auto-hidden when standalone) + Dark Mode Toggle -->
-      <div class="flex items-center gap-1">
-        <button id="pwaInstallBtn" type="button" onclick="window.ReharmEngine.triggerPWAInstall()" class="hidden p-2 rounded-[6px] text-slate-600 hover:text-sky-600 dark:text-slate-400 dark:hover:text-[#38bdf8] transition-colors cursor-pointer" title="Install App">
+      <!-- Right Controls: Audio Transport + PWA Install + Dark Mode Toggle -->
+      <div class="flex items-center gap-1 relative">
+        <!-- Minimal Audio Transport Controls -->
+        <div id="transportControls" class="flex items-center gap-1 mr-0.5">
+          <button id="playProgBtn" type="button" onclick="window.ReharmEngine.togglePlayback()" class="p-2 rounded-[6px] text-slate-500 hover:text-sky-600 dark:text-[#38bdf8]/70 dark:hover:text-[#38bdf8] transition-colors cursor-pointer" title="Play / Stop Progression">
+            <span id="playProgIcon">
+              <svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            </span>
+          </button>
+
+          <button id="bpmToggleBtn" type="button" onclick="window.ReharmEngine.toggleBpmPopover(event)" class="px-2 py-1 rounded-[6px] font-mono-tabular font-bold text-[11px] text-slate-500 hover:text-sky-600 dark:text-[#38bdf8]/70 dark:hover:text-[#38bdf8] transition-colors cursor-pointer select-none" title="Tempo & Loop">
+            <span id="bpmBadgeText">104</span>
+          </button>
+        </div>
+
+        <!-- Floating Minimal BPM & Loop Popover -->
+        <div id="bpmPopover" onclick="event.stopPropagation()" class="hidden absolute top-full right-8 mt-1.5 z-50 w-52 bg-white dark:bg-[#071d2c] border border-slate-200 dark:border-[#38bdf8]/40 rounded-[10px] shadow-xl p-3 flex flex-col gap-2.5">
+          <div class="flex items-center justify-between text-xs font-mono-tabular font-bold text-slate-700 dark:text-[#f8fafc]">
+            <span id="bpmPopoverValue">104 BPM</span>
+            <button id="loopToggleBtn" type="button" onclick="window.ReharmEngine.toggleLoop()" class="p-1.5 rounded-[6px] bg-sky-500/15 text-sky-600 dark:bg-[#0c4a6e] dark:text-[#38bdf8] transition-colors cursor-pointer" title="Toggle Loop">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg>
+            </button>
+          </div>
+          <input id="bpmRangeInput" type="range" min="60" max="200" step="2" value="104" oninput="window.ReharmEngine.setBpm(this.value)" class="w-full accent-sky-600 dark:accent-[#38bdf8] cursor-pointer h-1.5 bg-slate-200 dark:bg-[#030d17] rounded-lg" />
+        </div>
+
+        <button id="pwaInstallBtn" type="button" onclick="window.ReharmEngine.triggerPWAInstall()" class="hidden p-2 rounded-[6px] text-slate-500 hover:text-sky-600 dark:text-[#38bdf8]/70 dark:hover:text-[#38bdf8] transition-colors cursor-pointer" title="Install App">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
         </button>
 
-        <button type="button" onclick="window.ReharmEngine.toggleTheme()" class="p-2 rounded-[6px] text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition-colors cursor-pointer" title="Toggle Light/Dark Theme">
+        <button type="button" onclick="window.ReharmEngine.toggleTheme()" class="p-2 rounded-[6px] text-slate-500 hover:text-slate-900 dark:text-[#38bdf8]/70 dark:hover:text-white transition-colors cursor-pointer" title="Toggle Light/Dark Theme">
           <span id="themeIcon">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
           </span>
@@ -44,11 +69,11 @@
     </header>
 
     <!-- MAIN VIEWPORT CONTAINER (SWIPE LEFT FOR SAVED PROGRESSIONS, SWIPE RIGHT FOR RANDOMIZER) -->
-    <div id="mainContainer" class="flex-1 min-h-0 w-full max-w-lg mx-auto overflow-hidden select-none relative bg-slate-100 dark:bg-[#030d17] transition-colors">
+    <div id="mainContainer" class="flex-1 min-h-0 w-full max-w-lg mx-auto overflow-hidden select-none relative bg-slate-50 dark:bg-[#030d17] transition-colors">
       <div id="screenTrack" class="w-[200%] h-full flex transition-transform duration-300 ease-out translate-x-0">
         
         <!-- SCREEN 1: GENERATOR / RANDOMIZER VIEW -->
-        <div id="generatorView" class="w-1/2 h-full px-4 py-3 flex flex-col justify-between gap-4 shrink-0 bg-slate-100 dark:bg-[#030d17] transition-colors">
+        <div id="generatorView" class="w-1/2 h-full px-4 py-3 flex flex-col justify-between gap-4 shrink-0 bg-slate-50 dark:bg-[#030d17] transition-colors">
 
           <!-- 1. TOP AREA: SINGLE PROGRESSION OUTPUT (2 MEASURES PER LINE) -->
           <div id="reharmOutputContainer" class="flex-1 min-h-0 flex flex-col items-center justify-center my-auto w-full py-2 overflow-y-auto no-scrollbar" style="touch-action: pan-y;">
@@ -109,7 +134,7 @@
         </div>
 
         <!-- SCREEN 2: SAVED PROGRESSIONS VIEW (SWIPE LEFT TO OPEN, SWIPE RIGHT OR TAP CARD TO RETURN) -->
-        <div id="savedView" class="w-1/2 h-full px-4 py-3 flex flex-col justify-between gap-4 shrink-0 bg-slate-100 dark:bg-[#030d17] transition-colors">
+        <div id="savedView" class="w-1/2 h-full px-4 py-3 flex flex-col justify-between gap-4 shrink-0 bg-slate-50 dark:bg-[#030d17] transition-colors">
           
           <!-- SAVED PROGRESSIONS LIST / 1FR 1FR SQUARE SECTIONS -->
           <div id="savedProgressionsList" class="flex-1 min-h-0 w-full overflow-y-auto no-scrollbar flex flex-col gap-3 py-1" style="touch-action: pan-y;">
