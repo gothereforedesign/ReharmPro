@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#071d2c" />
+      <stop offset="100%" stop-color="#030d17" />
+    </linearGradient>
+    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7dd3fc" />
+      <stop offset="100%" stop-color="#0284c7" />
+    </linearGradient>
+  </defs>
+  <!-- Background squircle -->
+  <rect width="512" height="512" rx="112" fill="url(#bgGrad)" />
+  <rect x="28" y="28" width="456" height="456" rx="88" fill="none" stroke="#38bdf8" stroke-width="10" stroke-opacity="0.28" />
+  <!-- Measure barlines -->
+  <line x1="96" y1="146" x2="96" y2="366" stroke="#38bdf8" stroke-width="14" stroke-linecap="round" stroke-opacity="0.45" />
+  <line x1="416" y1="146" x2="416" y2="366" stroke="#38bdf8" stroke-width="14" stroke-linecap="round" stroke-opacity="0.45" />
+  <!-- Major 7th Delta Triangle (Δ) -->
+  <path d="M222 152 L318 348 L126 348 Z" fill="none" stroke="#f8fafc" stroke-width="26" stroke-linejoin="round" stroke-linecap="round" />
+  <!-- Superscript 7 badge -->
+  <path d="M316 144 H386 L342 246" fill="none" stroke="url(#accentGrad)" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" />
+</svg>
