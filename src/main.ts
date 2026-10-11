@@ -20,15 +20,53 @@ if ('serviceWorker' in navigator) {
 interface ChordBeatItem {
   chord: string;
   beats: number;
+  isTurnaround?: boolean;
 }
 
 interface BeatSlot {
   chord: Chord;
   isAttack: boolean;
+  isTurnaround?: boolean;
 }
+
+export type ChordSlotRole = 'ANCHOR' | 'TARGET' | 'APPROACH_SPACE' | 'PASSING_SLOT';
+export type ReharmMode = 'PASSING_ONLY' | 'APPROACH_TARGETING' | 'HYBRID' | 'FULL_REFRAME';
+export type ReharmDensity = 'SPARSE' | 'BALANCED' | 'DENSE';
+
+export interface ChordSlot {
+  measure: number;          // 1-indexed measure number (1, 2, 3, 4...)
+  beat: number;             // Beat position (1, 2, 3, 4)
+  durationInBeats: number;
+  chord: string;            // e.g., "D", "A7"
+  role: ChordSlotRole;
+  isUserFixed: boolean;     // True if user locks this chord/measure
+}
+
+export interface ReharmRequest {
+  progression: ChordSlot[];
+  mode: ReharmMode;
+  targetIndex?: number;     // Specific measure index (0-based) being targeted (defaults to cadences)
+  density: ReharmDensity;   // Controls harmonic rhythm
+  techniqueId?: string;
+  strategy?: string;
+  meter?: number;
+}
+
+export interface ReharmExecutionOptions {
+  mode?: ReharmMode;
+  density?: ReharmDensity;
+  targetIndex?: number | null;
+  lockedMeasures?: number[];
+  meter?: number;
+  loopTargetChord?: Chord;
+  disableTurnaround?: boolean;
+}
+
+type SavedSectionKey = 'basic' | 'jazz' | 'dark';
 
 interface SavedSections {
   basic: string[];
+  jazz: string[];
   dark: string[];
 }
 
@@ -191,10 +229,10 @@ export class TargetBackwardEngine {
     return new Chord(bii7Root, '7', null, false);
   }
 
-  // 3. Related ii7 Insertion: D + 5 semitones -> m7 (or m7b5)
+  // 3. Related ii7 Insertion: V7 + 7 semitones (or Target + 2 semitones) -> m7 (or m7b5)
   static add_related_two(dominantChord: Chord, resolveToMinor = false): Chord {
     const useSharp = dominantChord.preferSharps ?? SHARP_ROOTS.has(dominantChord.root);
-    const iiRoot = this.transpose(dominantChord.root, 5, useSharp);
+    const iiRoot = this.transpose(dominantChord.root, 7, useSharp);
     return new Chord(iiRoot, resolveToMinor ? 'm7b5' : 'm7', null, useSharp);
   }
 
@@ -304,7 +342,7 @@ export class TargetBackwardEngine {
       }
 
       case 'side_step_two_five': {
-        // Pure side-stepped ii-V -> target ii-V
+        // Pure side-stepped ii-V -> target ii-V (always ending on the true ii-V of targetChordX)
         const v7 = this.tonicize(targetChordX);
         const ii7 = this.add_related_two(v7, isMin);
         const ssV = this.side_step_above(v7);
@@ -313,9 +351,83 @@ export class TargetBackwardEngine {
         step2 = ii7;
         step3 = ssV;
         step4 = ssII;
-        twoChordCell = [ssII, ssV];
-        threeChordCell = [ssII, ssV, v7];
+        twoChordCell = [ii7, v7];
+        threeChordCell = [ssV, ii7, v7];
         fourChordCell = [ssII, ssV, ii7, v7];
+        break;
+      }
+
+      case 'dorian_dark': {
+        const pal = this.buildDarkPalette(targetChordX.root);
+        step1 = pal.IV7;
+        step2 = pal.ii7;
+        step3 = pal.i6;
+        step4 = pal.im7;
+        twoChordCell = [pal.ii7, pal.IV7];
+        threeChordCell = [pal.i6, pal.ii7, pal.IV7];
+        fourChordCell = [pal.im7, pal.i6, pal.ii7, pal.IV7];
+        break;
+      }
+
+      case 'chromatic_mediant': {
+        const pal = this.buildDarkPalette(targetChordX.root);
+        step1 = pal.bvi;
+        step2 = pal.biii;
+        step3 = pal.bVIaug;
+        step4 = pal.bvi6;
+        twoChordCell = [pal.biii, pal.bvi];
+        threeChordCell = [pal.bVI, pal.biii, pal.bvi];
+        fourChordCell = [pal.bvi6, pal.bVIaug, pal.biii, pal.bvi];
+        break;
+      }
+
+      case 'gothic_dominant': {
+        const pal = this.buildDarkPalette(targetChordX.root);
+        step1 = pal.V7b9;
+        step2 = pal.iiHalf;
+        step3 = pal.bVIaug;
+        step4 = pal.ivMin6;
+        twoChordCell = [pal.iiHalf, pal.V7b9];
+        threeChordCell = [pal.ivMin6, pal.iiHalf, pal.V7b9];
+        fourChordCell = [pal.bVIaug, pal.ivMin6, pal.iiHalf, pal.V7b9];
+        break;
+      }
+
+      case 'neapolitan_slide': {
+        const pal = this.buildDarkPalette(targetChordX.root);
+        step1 = pal.bII;
+        step2 = pal.biim;
+        step3 = pal.bII7;
+        step4 = pal.i6;
+        twoChordCell = [pal.biim, pal.bII];
+        threeChordCell = [pal.i6, pal.biim, pal.bII7];
+        fourChordCell = [pal.i6, pal.bII, pal.biim, pal.bII7];
+        break;
+      }
+
+      case 'diminished_axis': {
+        const pal = this.buildDarkPalette(targetChordX.root);
+        step1 = pal.viiDim7;
+        step2 = pal.sh4Dim7;
+        step3 = pal.Vaug;
+        step4 = pal.sh1Dim7;
+        twoChordCell = [pal.sh4Dim7, pal.viiDim7];
+        threeChordCell = [pal.sh1Dim7, pal.sh4Dim7, pal.viiDim7];
+        fourChordCell = [pal.tritMin, pal.sh1Dim7, pal.sh4Dim7, pal.viiDim7];
+        break;
+      }
+
+      case 'elfman_modulation': {
+        const pal = this.buildDarkPalette(targetChordX.root);
+        const modUp3 = this.buildDarkPalette(this.transpose(targetChordX.root, 3, false));
+        const modDown4 = this.buildDarkPalette(this.transpose(targetChordX.root, 8, false));
+        step1 = pal.imMaj7;
+        step2 = modUp3.imMaj7;
+        step3 = modDown4.i6;
+        step4 = modUp3.i;
+        twoChordCell = [modUp3.i, pal.imMaj7];
+        threeChordCell = [modDown4.i, modUp3.imMaj7, pal.imMaj7];
+        fourChordCell = [modDown4.i, modDown4.imMaj7, modUp3.i, pal.imMaj7];
         break;
       }
 
@@ -411,14 +523,545 @@ export class TargetBackwardEngine {
     }
   }
 
+  // ============================================================================
+  // AUTONOMOUS TARGET DETECTION & STRUCTURAL HEURISTICS
+  // ============================================================================
+  static resolveTargetMeasureIndex(
+    numMeasures: number,
+    explicitTargetIdx?: number | null
+  ): number {
+    if (numMeasures <= 0) return 0;
+    if (
+      explicitTargetIdx !== undefined &&
+      explicitTargetIdx !== null &&
+      explicitTargetIdx >= 0 &&
+      explicitTargetIdx < numMeasures
+    ) {
+      return explicitTargetIdx;
+    }
+    return numMeasures - 1;
+  }
+
+  /**
+   * Automatically scans a phrase of measures to find the natural Cadence Landing ("Target X"):
+   * - If the last 2 bars of a 4+ bar phrase hold the exact same chord after a change
+   *   (e.g., Dm7 | G7 | Cmaj7 | Cmaj7, or C | F | G | G), Measure 3 (index numMeasures - 2)
+   *   is the primary harmonic arrival (Target X), while Measure 4 is a static post-cadence bar.
+   * - If a 4-bar phrase is a 2+2 pattern (e.g., Cmaj7 | Cmaj7 | Fmaj7 | Fmaj7),
+   *   Measure 3 (index 2) is the internal cadence shift Target X.
+   * - Otherwise (e.g., D | D | D | A, or C | G | Am | F), the final bar of the phrase
+   *   (numMeasures - 1) is Target X.
+   */
+  static detectAutonomousTargetIndex(
+    measures: ChordBeatItem[][],
+    explicitTargetIdx?: number | null
+  ): { targetMIdx: number; hasPostCadenceExtension: boolean; isTwoByTwoPhrase: boolean } {
+    const numMeasures = measures.length;
+    if (numMeasures <= 1) {
+      return { targetMIdx: 0, hasPostCadenceExtension: false, isTwoByTwoPhrase: false };
+    }
+    if (
+      explicitTargetIdx !== undefined &&
+      explicitTargetIdx !== null &&
+      explicitTargetIdx >= 0 &&
+      explicitTargetIdx < numMeasures
+    ) {
+      return {
+        targetMIdx: explicitTargetIdx,
+        hasPostCadenceExtension: false,
+        isTwoByTwoPhrase: false
+      };
+    }
+
+    if (numMeasures >= 4) {
+      const m0 = measures[0];
+      const m1 = measures[1];
+      const mLast2 = measures[numMeasures - 2];
+      const mLast1 = measures[numMeasures - 1];
+      const mLast3 = measures[numMeasures - 3];
+
+      const isTwoByTwo =
+        numMeasures === 4 &&
+        m0.length === 1 &&
+        m1.length === 1 &&
+        mLast2.length === 1 &&
+        mLast1.length === 1 &&
+        m0[0].chord === m1[0].chord &&
+        mLast2[0].chord === mLast1[0].chord &&
+        m1[0].chord !== mLast2[0].chord;
+
+      if (isTwoByTwo) {
+        return { targetMIdx: 2, hasPostCadenceExtension: true, isTwoByTwoPhrase: true };
+      }
+
+      const isDoubledCadence =
+        mLast2.length === 1 &&
+        mLast1.length === 1 &&
+        mLast2[0].chord === mLast1[0].chord &&
+        mLast3[0]?.chord !== mLast2[0].chord;
+
+      if (isDoubledCadence) {
+        return {
+          targetMIdx: numMeasures - 2,
+          hasPostCadenceExtension: true,
+          isTwoByTwoPhrase: false
+        };
+      }
+    }
+
+    return {
+      targetMIdx: numMeasures - 1,
+      hasPostCadenceExtension: false,
+      isTwoByTwoPhrase: false
+    };
+  }
+
+  static parseProgressionToSlots(
+    measures: ChordBeatItem[][],
+    options: ReharmExecutionOptions = {}
+  ): ChordSlot[] {
+    if (!measures || measures.length === 0) return [];
+    const mode: ReharmMode = options.mode || 'HYBRID';
+    const lockedSet = new Set(options.lockedMeasures || []);
+    const numMeasures = measures.length;
+    const { targetMIdx } = this.detectAutonomousTargetIndex(measures, options.targetIndex);
+    const approachMIdx = targetMIdx > 0 ? targetMIdx - 1 : numMeasures - 1;
+
+    const slots: ChordSlot[] = [];
+
+    measures.forEach((meas, mIdx) => {
+      let currentBeat = 1;
+      const isMeasureLocked = lockedSet.has(mIdx);
+
+      meas.forEach((item, cIdx) => {
+        let role: ChordSlotRole = 'APPROACH_SPACE';
+
+        if (isMeasureLocked) {
+          role = 'ANCHOR';
+        } else if (mIdx === targetMIdx && cIdx === 0) {
+          role = 'TARGET';
+        } else if (mIdx === 0 && cIdx === 0 && mode !== 'FULL_REFRAME') {
+          // Rule 1: Measure 1, Beat 1 is automatically locked as ANCHOR
+          role = 'ANCHOR';
+        } else if (mode === 'PASSING_ONLY') {
+          role = 'PASSING_SLOT';
+        } else if (mIdx === approachMIdx) {
+          role = 'APPROACH_SPACE';
+        } else {
+          role = 'PASSING_SLOT';
+        }
+
+        slots.push({
+          measure: mIdx + 1,
+          beat: currentBeat,
+          durationInBeats: item.beats,
+          chord: item.chord,
+          role,
+          isUserFixed: isMeasureLocked
+        });
+
+        currentBeat += item.beats;
+      });
+    });
+
+    return slots;
+  }
+
+  static slotsToMeasures(slots: ChordSlot[]): ChordBeatItem[][] {
+    if (!slots || slots.length === 0) return [];
+    const byMeasure = new Map<number, ChordBeatItem[]>();
+    slots.forEach(s => {
+      const mIdx = Math.max(0, s.measure - 1);
+      if (!byMeasure.has(mIdx)) {
+        byMeasure.set(mIdx, []);
+      }
+      const arr = byMeasure.get(mIdx)!;
+      if (arr.length > 0 && arr[arr.length - 1].chord === s.chord) {
+        arr[arr.length - 1].beats += s.durationInBeats;
+      } else {
+        arr.push({ chord: s.chord, beats: s.durationInBeats });
+      }
+    });
+    const maxM = Math.max(...Array.from(byMeasure.keys()));
+    const result: ChordBeatItem[][] = [];
+    for (let m = 0; m <= maxM; m++) {
+      result.push(byMeasure.get(m) || []);
+    }
+    return result;
+  }
+
+  // ============================================================================
+  // HELPER: INSERT PASSING CHORD(S) INTO A BAR WITHOUT DELETING BASE CHORD(S)
+  // ============================================================================
+  static insertPassingIntoBar(
+    barGrid: BeatSlot[],
+    origMeas: ChordBeatItem[],
+    nextTargetChord: Chord,
+    techniqueId: string,
+    subStyle: 'beat4_pickup' | 'beats34_single' | 'beats34_two_chord' | 'beats234_walk'
+  ) {
+    const len = barGrid.length;
+    if (len < 2 || !origMeas || origMeas.length === 0) return;
+
+    const approachToNext = this.getApproachChords(nextTargetChord, techniqueId);
+    const { step1, step2, step3, twoChordCell, fourChordCell } = approachToNext;
+    const isTwoFiveTech =
+      techniqueId === 'standard_two_five' ||
+      techniqueId === 'tritone_two_five' ||
+      techniqueId === 'side_step_two_five';
+
+    // Case A: Single sustained chord in the measure (e.g. | D / / / |)
+    if (origMeas.length === 1) {
+      const baseChord = Chord.fromSymbol(origMeas[0].chord);
+      if (len === 3) {
+        if (isTwoFiveTech || subStyle === 'beats34_two_chord' || subStyle === 'beats234_walk') {
+          this.fillBarBeats(barGrid, [baseChord, twoChordCell[0], twoChordCell[1]], 'standard');
+        } else {
+          this.fillBarBeats(barGrid, [baseChord, step1], 'late');
+        }
+        return;
+      }
+
+      // 4/4 time (len >= 4)
+      if (isTwoFiveTech) {
+        if (techniqueId === 'side_step_two_five' && subStyle === 'beats234_walk') {
+          this.fillBarBeats(barGrid, fourChordCell, 'standard');
+        } else {
+          // Always insert the complete [ii, V] pair on Beats 3 & 4 leading into nextTargetChord
+          this.fillBarBeats(barGrid, [baseChord, twoChordCell[0], twoChordCell[1]], 'standard');
+        }
+        return;
+      }
+
+      if (subStyle === 'beat4_pickup') {
+        // Keep baseChord on Beats 1, 2, 3; insert passing chord on Beat 4
+        this.fillBarBeats(barGrid, [baseChord, step1], 'late');
+      } else if (subStyle === 'beats34_single') {
+        // Keep baseChord on Beats 1 & 2; insert passing chord on Beats 3 & 4
+        this.fillBarBeats(barGrid, [baseChord, step1], 'standard');
+      } else if (subStyle === 'beats34_two_chord') {
+        // Keep baseChord on Beats 1 & 2; insert 2-chord passing cell on Beats 3 & 4
+        this.fillBarBeats(barGrid, [baseChord, twoChordCell[0], twoChordCell[1]], 'standard');
+      } else {
+        // 'beats234_walk': Keep baseChord on Beat 1; 3-step passing walk on Beats 2, 3, 4
+        this.fillBarBeats(barGrid, [baseChord, step3, step2, step1], 'standard');
+      }
+      return;
+    }
+
+    // Case B: Measure already has 2 chords (e.g. | C / G / |, each 2 beats)
+    if (origMeas.length === 2 && len >= 4) {
+      const c1 = Chord.fromSymbol(origMeas[0].chord);
+      const c2 = Chord.fromSymbol(origMeas[1].chord);
+      if (isTwoFiveTech) {
+        // Keep c1 on Beat 1, c2 on Beat 2, and insert the complete [ii, V] of nextTargetChord on Beats 3 & 4
+        barGrid[0] = { chord: c1, isAttack: true };
+        barGrid[1] = { chord: c2, isAttack: true };
+        barGrid[2] = { chord: twoChordCell[0], isAttack: true };
+        for (let b = 3; b < len; b++) {
+          barGrid[b] = { chord: twoChordCell[1], isAttack: b === 3 };
+        }
+      } else if (subStyle === 'beat4_pickup' || subStyle === 'beats34_single') {
+        // Keep c1 on Beats 1-2, c2 on Beat 3, insert passing chord on Beat 4 approaching next bar
+        barGrid[0] = { chord: c1, isAttack: true };
+        barGrid[1] = { chord: c1, isAttack: false };
+        barGrid[2] = { chord: c2, isAttack: true };
+        for (let b = 3; b < len; b++) {
+          barGrid[b] = { chord: step1, isAttack: b === 3 };
+        }
+      } else {
+        // Insert passing chord on Beat 2 approaching c2 AND on Beat 4 approaching next bar
+        const appToC2 = this.getApproachChords(c2, techniqueId);
+        barGrid[0] = { chord: c1, isAttack: true };
+        barGrid[1] = { chord: appToC2.step1, isAttack: true };
+        barGrid[2] = { chord: c2, isAttack: true };
+        for (let b = 3; b < len; b++) {
+          barGrid[b] = { chord: step1, isAttack: b === 3 };
+        }
+      }
+      return;
+    }
+
+    // Case C: Measure has 3 chords in 4/4 (e.g. 2 beats + 1 beat + 1 beat) -> subdivide the 2-beat slot if first
+    if (origMeas.length === 3 && origMeas[0].beats >= 2 && len >= 4) {
+      const c1 = Chord.fromSymbol(origMeas[0].chord);
+      const c2 = Chord.fromSymbol(origMeas[1].chord);
+      const c3 = Chord.fromSymbol(origMeas[2].chord);
+      const appToC2 = this.getApproachChords(c2, techniqueId);
+      barGrid[0] = { chord: c1, isAttack: true };
+      barGrid[1] = { chord: appToC2.step1, isAttack: true };
+      barGrid[2] = { chord: c2, isAttack: true };
+      for (let b = 3; b < len; b++) {
+        barGrid[b] = { chord: c3, isAttack: b === 3 };
+      }
+    }
+  }
+
+  // ============================================================================
+  // TURNAROUND / TURN-BACK ENGINE (TREATS BAR 1, BEAT 1 AS IMPLICIT TARGET X)
+  // ============================================================================
+  static applyTurnaroundToFinalBar(
+    finalGrid: BeatSlot[],
+    _origFinalBar: ChordBeatItem[],
+    loopDestinationChord: Chord,
+    techniqueId: string,
+    turnaroundStyle: 'auto' | 'two_chord' | 'single_34' | 'beat4_pickup' = 'auto'
+  ): void {
+    const len = finalGrid.length;
+    if (len < 2) return;
+
+    const { step1, step2, twoChordCell } = this.getApproachChords(loopDestinationChord, techniqueId);
+    const isPassingBeatTechnique =
+      techniqueId === 'diminished_pivot' ||
+      techniqueId === 'side_step' ||
+      techniqueId === 'chromatic_bass' ||
+      techniqueId === 'diminished_axis';
+    const isTwoFiveFamily =
+      techniqueId === 'standard_two_five' ||
+      techniqueId === 'tritone_two_five' ||
+      techniqueId === 'side_step_two_five' ||
+      techniqueId === 'circle_of_fifths' ||
+      techniqueId === 'backdoor' ||
+      techniqueId === 'dorian_dark' ||
+      techniqueId === 'gothic_dominant' ||
+      techniqueId === 'neapolitan_slide' ||
+      techniqueId === 'chromatic_mediant';
+
+    const isCoreTwoFive =
+      techniqueId === 'standard_two_five' ||
+      techniqueId === 'tritone_two_five' ||
+      techniqueId === 'side_step_two_five';
+
+    let resolvedStyle: 'two_chord' | 'single_34' | 'beat4_pickup';
+    if (isCoreTwoFive && len >= 4) {
+      resolvedStyle = 'two_chord';
+    } else if (turnaroundStyle === 'auto') {
+      if (isPassingBeatTechnique) {
+        resolvedStyle = 'beat4_pickup';
+      } else if (isTwoFiveFamily) {
+        resolvedStyle = 'two_chord';
+      } else {
+        resolvedStyle = 'single_34';
+      }
+    } else {
+      resolvedStyle = turnaroundStyle;
+    }
+
+    const firstChord = finalGrid[0].chord;
+
+    if (len === 3) {
+      // 3/4 meter: keep Beats 1-2, insert turnaround pickup on Beat 3
+      const prevChordStr = finalGrid[len - 2].chord.toString();
+      const pickupChord = step1.toString() === prevChordStr ? twoChordCell[0] : step1;
+      finalGrid[len - 1] = { chord: pickupChord, isAttack: true, isTurnaround: true };
+      return;
+    }
+
+    if (resolvedStyle === 'beat4_pickup') {
+      // Preserve Beats 1..3 (e.g. A A/B A/C#) and insert passing chromatic/turnaround chord on final beat (Beat 4)
+      const prevChordStr = finalGrid[len - 2].chord.toString();
+      const pickupChord = step1.toString() === prevChordStr ? twoChordCell[0] : step1;
+      finalGrid[len - 1] = { chord: pickupChord, isAttack: true, isTurnaround: true };
+      return;
+    }
+
+    if (resolvedStyle === 'single_34') {
+      // Hold opening chord of the final measure on Beats 1 & 2, reserve Beats 3 & 4 for turn-back chord
+      finalGrid[0] = { chord: firstChord, isAttack: true };
+      finalGrid[1] = { chord: firstChord, isAttack: false };
+      if (step1.toString() === firstChord.toString()) {
+        finalGrid[len - 2] = { chord: twoChordCell[0], isAttack: true, isTurnaround: true };
+        finalGrid[len - 1] = { chord: twoChordCell[1], isAttack: true, isTurnaround: true };
+      } else {
+        finalGrid[len - 2] = { chord: step1, isAttack: true, isTurnaround: true };
+        finalGrid[len - 1] = { chord: step1, isAttack: false, isTurnaround: true };
+      }
+      return;
+    }
+
+    // resolvedStyle === 'two_chord'
+    // Hold opening chord of the final measure on Beats 1 & 2, reserve Beats 3 & 4 for 2-chord turnaround (e.g. Em7 A7 or Bbm7 Eb7)
+    finalGrid[0] = { chord: firstChord, isAttack: true };
+    finalGrid[1] = { chord: firstChord, isAttack: false };
+    const c1 = twoChordCell[0];
+    const c2 = twoChordCell[1];
+    if (c1.toString() === c2.toString()) {
+      finalGrid[len - 2] = { chord: step2, isAttack: true, isTurnaround: true };
+      finalGrid[len - 1] = { chord: step1, isAttack: true, isTurnaround: true };
+    } else {
+      finalGrid[len - 2] = { chord: c1, isAttack: true, isTurnaround: true };
+      finalGrid[len - 1] = { chord: c2, isAttack: true, isTurnaround: true };
+    }
+  }
+
+  // ============================================================================
+  // MODE A: PASSING CHORD MODE (INSERTION — NEVER DELETES BASE CHORDS)
+  // ============================================================================
+  static reharmonizePassingMode(
+    measures: ChordBeatItem[][],
+    techniqueId: string,
+    strategy: string,
+    options: ReharmExecutionOptions = {}
+  ): ChordBeatItem[][] {
+    if (!measures || measures.length === 0) return [];
+    const density: ReharmDensity = options.density || 'BALANCED';
+    const lockedSet = new Set(options.lockedMeasures || []);
+    const numMeasures = measures.length;
+    const targetMIdx = this.resolveTargetMeasureIndex(numMeasures, options.targetIndex);
+
+    const measureBeatGrids: BeatSlot[][] = measures.map(meas => {
+      const beats: BeatSlot[] = [];
+      meas.forEach(item => {
+        const cObj = Chord.fromSymbol(item.chord);
+        for (let b = 0; b < item.beats; b++) {
+          beats.push({ chord: cObj, isAttack: b === 0 });
+        }
+      });
+      return beats;
+    });
+
+    const isTwoFiveFamily = (
+      techniqueId === 'standard_two_five' ||
+      techniqueId === 'tritone_two_five' ||
+      techniqueId === 'side_step_two_five' ||
+      techniqueId === 'dorian_dark' ||
+      techniqueId === 'gothic_dominant'
+    );
+
+    // Map strategy + density to which bars receive passing chords and which subdivision style
+    for (let mIdx = 0; mIdx < numMeasures; mIdx++) {
+      if (lockedSet.has(mIdx)) continue; // Respect user lock
+
+      const nextMIdx = (mIdx + 1) % numMeasures;
+      const nextChord = measureBeatGrids[nextMIdx]?.[0]?.chord;
+      if (!nextChord) continue;
+
+      const isTargetBar = mIdx === targetMIdx;
+      const isRunwayBeforeTarget = mIdx === ((targetMIdx - 1 + numMeasures) % numMeasures);
+
+      let shouldSubdivide = false;
+      let subStyle: 'beat4_pickup' | 'beats34_single' | 'beats34_two_chord' | 'beats234_walk' =
+        density === 'SPARSE'
+          ? 'beat4_pickup'
+          : density === 'DENSE'
+            ? 'beats34_two_chord'
+            : (isTwoFiveFamily ? 'beats34_two_chord' : 'beats34_single');
+
+      if (numMeasures === 1) {
+        shouldSubdivide = true;
+        if (strategy === 'strategy2') subStyle = 'beat4_pickup';
+        else if (strategy === 'strategy3') subStyle = 'beats34_two_chord';
+        else if (strategy === 'strategy4') subStyle = 'beats234_walk';
+      } else {
+        switch (strategy) {
+          case 'strategy1': {
+            // Primary Passing: All non-target bars get passing movement into the next bar
+            shouldSubdivide = !isTargetBar;
+            break;
+          }
+          case 'strategy2': {
+            // Late Beat-4 Pickups on all non-target bars
+            shouldSubdivide = !isTargetBar;
+            subStyle = 'beat4_pickup';
+            break;
+          }
+          case 'strategy3': {
+            // 2-chord passing cell on Beats 3 & 4 in runway bar; Beat-4 pickup in earlier bars
+            shouldSubdivide = !isTargetBar;
+            subStyle = isRunwayBeforeTarget ? 'beats34_two_chord' : 'beat4_pickup';
+            break;
+          }
+          case 'strategy4': {
+            // Spacious Alternating: Only Runway bar (and Bar 1 if 4+ bars) get passing chords
+            shouldSubdivide = isRunwayBeforeTarget || (numMeasures >= 4 && mIdx === 0 && !isTargetBar);
+            subStyle = density === 'SPARSE' ? 'beat4_pickup' : 'beats34_two_chord';
+            break;
+          }
+          case 'strategy5': {
+            // Focused Cadential Passing: Only the bar immediately before Target X gets passing chords
+            shouldSubdivide = isRunwayBeforeTarget;
+            subStyle = isTwoFiveFamily || density !== 'SPARSE' ? 'beats34_two_chord' : 'beats34_single';
+            break;
+          }
+          case 'strategy6': {
+            // Internal bars get 2-beat passing; Target X bar also gets a Beat-4 turnaround pickup
+            shouldSubdivide = true;
+            subStyle = isTargetBar ? 'beat4_pickup' : 'beats34_single';
+            break;
+          }
+          case 'strategy7': {
+            // Escalating harmonic rhythm: Beat-4 pickup early, 2-chord cell in runway before Target
+            if (!isTargetBar) {
+              shouldSubdivide = true;
+              subStyle = isRunwayBeforeTarget
+                ? (density === 'DENSE' ? 'beats234_walk' : 'beats34_two_chord')
+                : 'beat4_pickup';
+            }
+            break;
+          }
+          case 'strategy8':
+          default: {
+            // Full forward momentum across all unlocked bars including turnaround
+            shouldSubdivide = true;
+            subStyle = density === 'SPARSE'
+              ? 'beats34_single'
+              : (density === 'DENSE' && isRunwayBeforeTarget ? 'beats234_walk' : 'beats34_two_chord');
+            break;
+          }
+        }
+      }
+
+      if (shouldSubdivide) {
+        if (mIdx === numMeasures - 1 && !options.disableTurnaround) {
+          this.applyTurnaroundToFinalBar(
+            measureBeatGrids[mIdx],
+            measures[mIdx],
+            options.loopTargetChord || nextChord,
+            techniqueId,
+            subStyle === 'beat4_pickup' ? 'beat4_pickup' : 'auto'
+          );
+        } else {
+          this.insertPassingIntoBar(
+            measureBeatGrids[mIdx],
+            measures[mIdx],
+            nextChord,
+            techniqueId,
+            subStyle
+          );
+        }
+      }
+    }
+
+    return this.compressBeatGrids(measureBeatGrids);
+  }
+
+  // ============================================================================
+  // AUTONOMOUS TARGET-FIRST BACKWARD & PASSING ENGINE
+  // ============================================================================
   static reharmonizeProgressionBackward(
     measures: ChordBeatItem[][],
     techniqueId = 'tonicize',
-    strategy = 'strategy1'
+    strategy = 'strategy1',
+    options: ReharmExecutionOptions = {}
   ): ChordBeatItem[][] {
     if (!measures || measures.length === 0) return [];
 
-    // Always build fresh beat grids from the base measures
+    // Default to autonomous HYBRID arrangement (combines Passing Chords on static bars + Approach Chains before Target X)
+    const mode: ReharmMode = options.mode || 'HYBRID';
+    const density: ReharmDensity = options.density || 'BALANCED';
+    const lockedSet = new Set(options.lockedMeasures || []);
+
+    if (mode === 'PASSING_ONLY') {
+      return this.reharmonizePassingMode(measures, techniqueId, strategy, options);
+    }
+
+    // Strategy 4 in autonomous HYBRID mode acts as "Card 1 (Subtle Passing)":
+    // Keeps the ending as-is and adds light internal passing chords on Beats 3-4 before changes
+    if (mode === 'HYBRID' && !options.targetIndex && strategy === 'strategy4') {
+      return this.reharmonizePassingMode(measures, techniqueId, 'strategy1', options);
+    }
+
+    // Build fresh beat grids from the unmodified base measures
     const measureBeatGrids: BeatSlot[][] = measures.map(meas => {
       const beats: BeatSlot[] = [];
       meas.forEach(item => {
@@ -431,7 +1074,71 @@ export class TargetBackwardEngine {
     });
 
     const numMeasures = measureBeatGrids.length;
-    const targetMIdx = numMeasures - 1;
+    const loopDestinationChord = options.loopTargetChord || measureBeatGrids[0][0].chord;
+    const finalMIdx = numMeasures - 1;
+    const canTurnaroundFinalBar =
+      !options.disableTurnaround &&
+      !lockedSet.has(finalMIdx) &&
+      measureBeatGrids[finalMIdx].length >= 2;
+
+    // Strategy 2 & Strategy 5 in autonomous HYBRID mode act as "Loop Turnaround" variations:
+    // Keep Bars 1..(N-1) intact (or on Strategy 5, also add a passing approach in Bar 1 -> Bar 2)
+    // and reharmonize the end of the final bar to pull back into Bar 1, Beat 1!
+    if (
+      mode === 'HYBRID' &&
+      !options.targetIndex &&
+      numMeasures >= 2 &&
+      canTurnaroundFinalBar &&
+      (strategy === 'strategy2' || strategy === 'strategy5')
+    ) {
+      const isPassingBeatTechnique =
+        techniqueId === 'diminished_pivot' ||
+        techniqueId === 'side_step' ||
+        techniqueId === 'chromatic_bass' ||
+        techniqueId === 'diminished_axis';
+      if (strategy === 'strategy5' && numMeasures >= 3 && !lockedSet.has(0)) {
+        const bar1Target = measureBeatGrids[1]?.[0]?.chord;
+        if (bar1Target) {
+          this.insertPassingIntoBar(
+            measureBeatGrids[0],
+            measures[0],
+            bar1Target,
+            techniqueId,
+            'beats34_two_chord'
+          );
+        }
+      }
+      const turnStyle =
+        strategy === 'strategy2'
+          ? 'auto'
+          : (isPassingBeatTechnique ? 'two_chord' : 'beat4_pickup');
+      this.applyTurnaroundToFinalBar(
+        measureBeatGrids[finalMIdx],
+        measures[finalMIdx],
+        loopDestinationChord,
+        techniqueId,
+        turnStyle
+      );
+      return this.compressBeatGrids(measureBeatGrids);
+    }
+
+    const autoTarget = this.detectAutonomousTargetIndex(measures, options.targetIndex);
+    let targetMIdx = autoTarget.targetMIdx;
+
+    // For doubled-cadence progressions (e.g., Dm7 | G7 | Cmaj7 | Cmaj7),
+    // targetMIdx defaults to Measure 3 (index numMeasures - 2, the initial resolution of Cmaj7).
+    // Allow strategy 8 to target the final Measure 4 (numMeasures - 1) as an alternate cadence resolution!
+    const userPinnedTarget =
+      options.targetIndex !== undefined && options.targetIndex !== null;
+    if (
+      !userPinnedTarget &&
+      autoTarget.hasPostCadenceExtension &&
+      !autoTarget.isTwoByTwoPhrase &&
+      strategy === 'strategy8'
+    ) {
+      targetMIdx = numMeasures - 1;
+    }
+
     const targetGrid = measureBeatGrids[targetMIdx];
     if (!targetGrid || targetGrid.length === 0) return measures;
 
@@ -441,197 +1148,341 @@ export class TargetBackwardEngine {
     const isTwoFiveFamily = (
       techniqueId === 'standard_two_five' ||
       techniqueId === 'tritone_two_five' ||
-      techniqueId === 'side_step_two_five'
+      techniqueId === 'side_step_two_five' ||
+      techniqueId === 'dorian_dark' ||
+      techniqueId === 'gothic_dominant'
     );
 
     // =========================================================================
-    // CASE 1: 4 or more measures (Anchor = Bar 1 `home0`, Runway = Bars 2 & 3, Target = Bar 4)
+    // RULE 1: AUTO-ANCHORING HOME LANDMARKS
+    // Measure 0 Beat 1 is automatically locked as ANCHOR unless mode === 'FULL_REFRAME'
+    // or Measure 0 itself is Target X.
     // =========================================================================
-    if (targetMIdx >= 3) {
-      const bar0 = measureBeatGrids[targetMIdx - 3];
-      const bar1 = measureBeatGrids[targetMIdx - 2];
-      const bar2 = measureBeatGrids[targetMIdx - 1];
-      const home0 = bar0[0].chord;
+    const isAnchorMeasure = (mIdx: number): boolean => {
+      if (lockedSet.has(mIdx)) return true;
+      if (mode !== 'FULL_REFRAME' && mIdx === 0 && targetMIdx !== 0) return true;
+      return false;
+    };
 
-      if (strategy === 'strategy2') {
-        // Lock Bars 1 & 2 on Home Anchor, 2-chord approach in Bar 3
-        this.fillBarBeats(bar0, [home0]);
-        this.fillBarBeats(bar1, [home0]);
-        this.fillBarBeats(bar2, isTwoFiveFamily ? [step2, step1] : twoChordCell, 'standard');
+    const r1Idx = targetMIdx > 0 ? targetMIdx - 1 : numMeasures - 1;
+    const r2Idx = targetMIdx > 1 ? targetMIdx - 2 : -1;
+    const r3Idx = targetMIdx > 2 ? targetMIdx - 3 : -1;
 
-      } else if (strategy === 'strategy3') {
-        // Lock Bars 1 & 2 on Home Anchor, late micro-target in Bar 3
-        this.fillBarBeats(bar0, [home0]);
-        this.fillBarBeats(bar1, [home0]);
-        this.fillBarBeats(bar2, [home0, step1], 'standard');
+    const r1LockedByUser = lockedSet.has(r1Idx);
+    const r1IsProtectedHomeAnchor = mode !== 'FULL_REFRAME' && r1Idx === 0 && targetMIdx === 1;
 
-      } else if (strategy === 'strategy4') {
-        // Sustain Home Anchor into first half of Bar 2, pickup into Bar 3 approach
-        this.fillBarBeats(bar0, [home0]);
-        this.fillBarBeats(bar1, [home0, isTwoFiveFamily ? step3 : step2], 'standard');
-        this.fillBarBeats(bar2, isTwoFiveFamily ? [step2, step1] : [step1], 'standard');
+    const canReplaceR1Full = !r1LockedByUser && !r1IsProtectedHomeAnchor && r1Idx !== targetMIdx;
+    const canReplaceR2Full =
+      canReplaceR1Full &&
+      r2Idx >= 0 &&
+      !isAnchorMeasure(r2Idx) &&
+      mode !== 'HYBRID';
+    const canReplaceR3Full =
+      canReplaceR2Full &&
+      r3Idx >= 0 &&
+      !isAnchorMeasure(r3Idx) &&
+      mode === 'FULL_REFRAME';
 
-      } else if (strategy === 'strategy5') {
-        // Lock Bars 1 & 2 on Home Anchor, accelerated multi-chord runway in Bar 3
-        this.fillBarBeats(bar0, [home0]);
-        this.fillBarBeats(bar1, [home0]);
-        this.fillBarBeats(bar2, bar2.length === 3 ? threeChordCell : fourChordCell);
-
-      } else if (strategy === 'strategy6') {
-        // Extended Runway starting on late beat of Bar 1
-        this.fillBarBeats(bar0, [home0, step3], 'late');
-        this.fillBarBeats(bar1, [step2]);
-        this.fillBarBeats(bar2, isTwoFiveFamily ? [step2, step1] : [step1], 'standard');
-
-      } else if (strategy === 'strategy7') {
-        // 2-Bar Runway with 3-chord cadence in Bar 3
-        this.fillBarBeats(bar0, [home0]);
-        this.fillBarBeats(bar1, [home0, step3], 'late');
-        this.fillBarBeats(bar2, threeChordCell, 'standard');
-
-      } else if (strategy === 'strategy8') {
-        // Full 4-chord chain across Bars 2 & 3
-        this.fillBarBeats(bar0, [home0]);
-        this.fillBarBeats(bar1, [step4, step3], 'standard');
-        this.fillBarBeats(bar2, [step2, step1], 'standard');
-
-      } else {
-        // Strategy 1 (Default): Lock Bar 1 Anchor, 2-Bar Runway across Bars 2 & 3
-        this.fillBarBeats(bar0, [home0]);
-        if (techniqueId === 'side_step_two_five') {
-          this.fillBarBeats(bar1, [step4, step3], 'standard');
-          this.fillBarBeats(bar2, [step2, step1], 'standard');
-        } else if (isTwoFiveFamily) {
-          this.fillBarBeats(bar1, [step2]);
-          this.fillBarBeats(bar2, [step1]);
-        } else if (techniqueId === 'circle_of_fifths') {
-          this.fillBarBeats(bar1, [step3, step2], 'standard');
-          this.fillBarBeats(bar2, [step1]);
+    // =========================================================================
+    // CASE 1: 1 Single Measure Progression
+    // =========================================================================
+    if (numMeasures === 1) {
+      if (!lockedSet.has(0) && measureBeatGrids[0].length >= 2) {
+        const homeChord = measureBeatGrids[0][0].chord;
+        if (mode === 'FULL_REFRAME') {
+          this.fillBarBeats(measureBeatGrids[0], [homeChord, step2, step1], 'standard');
         } else {
-          this.fillBarBeats(bar1, [step2]);
-          this.fillBarBeats(bar2, [step1]);
-        }
-      }
-
-    // =========================================================================
-    // CASE 2: 3 measures (Anchor = Bar 1 `home0`, Runway = Bar 2, Target = Bar 3)
-    // Purely uses Anchor `home0` + active technique's approach cells (never retains old Bar 2 chord)
-    // =========================================================================
-    } else if (targetMIdx === 2) {
-      const bar0 = measureBeatGrids[0];
-      const bar1 = measureBeatGrids[1];
-      const home0 = bar0[0].chord;
-
-      if (strategy === 'strategy2') {
-        // 2-chord cell in Bar 2 (or 1-chord if Default Strategy 1 used 2-chord)
-        this.fillBarBeats(bar0, [home0]);
-        if (isTwoFiveFamily || techniqueId === 'circle_of_fifths') {
-          this.fillBarBeats(bar1, [step1]);
-        } else {
-          this.fillBarBeats(bar1, twoChordCell, 'standard');
-        }
-      } else if (strategy === 'strategy3') {
-        // Micro-Target: Sustain Home Anchor into first half of Bar 2, approach in second half
-        this.fillBarBeats(bar0, [home0]);
-        this.fillBarBeats(bar1, [home0, step1], 'standard');
-      } else if (strategy === 'strategy4') {
-        // Late 1-beat pickup in Bar 2
-        this.fillBarBeats(bar0, [home0]);
-        this.fillBarBeats(bar1, [home0, step1], 'late');
-      } else if (strategy === 'strategy5') {
-        // 3-chord runway in Bar 2
-        this.fillBarBeats(bar0, [home0]);
-        this.fillBarBeats(bar1, threeChordCell, 'standard');
-      } else if (strategy === 'strategy6') {
-        // 4-chord (or 3-chord in 3/4) accelerated runway in Bar 2
-        this.fillBarBeats(bar0, [home0]);
-        this.fillBarBeats(bar1, bar1.length === 3 ? threeChordCell : fourChordCell);
-      } else if (strategy === 'strategy7') {
-        // Extended Runway starting on second half of Bar 1
-        this.fillBarBeats(bar0, [home0, step2], 'standard');
-        this.fillBarBeats(bar1, isTwoFiveFamily ? [step2, step1] : [step1], 'standard');
-      } else if (strategy === 'strategy8') {
-        // Extended 3-Step Runway starting on final beat of Bar 1
-        this.fillBarBeats(bar0, [home0, step3], 'late');
-        this.fillBarBeats(bar1, [step2, step1], 'standard');
-      } else {
-        // Strategy 1 (Default): Cleanest primary representation of the selected technique in Bar 2
-        this.fillBarBeats(bar0, [home0]);
-        if (techniqueId === 'side_step_two_five') {
-          this.fillBarBeats(bar1, fourChordCell);
-        } else if (isTwoFiveFamily || techniqueId === 'circle_of_fifths') {
-          this.fillBarBeats(bar1, [step2, step1], 'standard');
-        } else {
-          this.fillBarBeats(bar1, [step1]);
-        }
-      }
-
-    // =========================================================================
-    // CASE 3: 2 measures (Anchor = Bar 1 Beat 1 `home0`, Target = Bar 2 `targetChordX`)
-    // =========================================================================
-    } else if (targetMIdx === 1) {
-      const bar0 = measureBeatGrids[0];
-      const bar1 = measureBeatGrids[1];
-      const home0 = bar0[0].chord;
-      const b0Len = bar0.length;
-
-      if (strategy === 'strategy2') {
-        this.fillBarBeats(bar0, [home0, step1], 'late');
-      } else if (strategy === 'strategy3') {
-        this.fillBarBeats(bar0, [home0, step2, step1], 'standard');
-      } else if (strategy === 'strategy4') {
-        this.fillBarBeats(
-          bar0,
-          b0Len === 3 ? [home0, step2, step1] : [home0, step3, step2, step1]
-        );
-      } else if (strategy === 'strategy5') {
-        this.fillBarBeats(bar0, [home0, step1], 'early');
-      } else if (strategy === 'strategy6') {
-        const homeApproach = this.getApproachChords(home0, techniqueId);
-        this.fillBarBeats(bar0, [home0, step1], 'standard');
-        this.fillBarBeats(bar1, [targetChordX, homeApproach.step1], 'late');
-      } else if (strategy === 'strategy7') {
-        this.fillBarBeats(bar0, [step2, step1], 'standard');
-      } else if (strategy === 'strategy8') {
-        this.fillBarBeats(bar0, b0Len === 3 ? threeChordCell : fourChordCell);
-      } else {
-        if (isTwoFiveFamily || techniqueId === 'circle_of_fifths') {
-          this.fillBarBeats(bar0, [home0, step2, step1], 'standard');
-        } else {
-          this.fillBarBeats(bar0, [home0, step1], 'standard');
-        }
-      }
-
-    // =========================================================================
-    // CASE 4: 1 single measure (targetMIdx === 0)
-    // =========================================================================
-    } else {
-      const bar = measureBeatGrids[0];
-      if (bar.length >= 2) {
-        const homeChord = bar[0].chord;
-        if (strategy === 'strategy2') {
-          this.fillBarBeats(bar, [homeChord, step1], 'late');
-        } else if (strategy === 'strategy3') {
-          this.fillBarBeats(bar, [homeChord, step2, step1], 'standard');
-        } else if (strategy === 'strategy4') {
-          this.fillBarBeats(
-            bar,
-            bar.length === 3 ? [homeChord, step2, step1] : [homeChord, step3, step2, step1]
+          this.applyTurnaroundToFinalBar(
+            measureBeatGrids[0],
+            measures[0],
+            homeChord,
+            techniqueId,
+            strategy === 'strategy2' ? 'beat4_pickup' : 'auto'
           );
+        }
+      }
+      return this.compressBeatGrids(measureBeatGrids);
+    }
+
+    // =========================================================================
+    // CASE 2: Target X is Measure 2 (r1Idx === 0, Home Anchor is immediately before Target X, e.g. 2-bar progression)
+    // =========================================================================
+    if (r1IsProtectedHomeAnchor && !r1LockedByUser) {
+      // Keep Home Anchor on Beat 1 (and Beat 2) of Measure 0, insert approach to Target X on Beats 3-4
+      const subMap: Record<string, 'beat4_pickup' | 'beats34_single' | 'beats34_two_chord' | 'beats234_walk'> = {
+        strategy1: isTwoFiveFamily || density === 'DENSE' ? 'beats34_two_chord' : 'beats34_single',
+        strategy2: 'beat4_pickup',
+        strategy3: 'beats34_two_chord',
+        strategy4: 'beats234_walk',
+        strategy5: 'beats34_single',
+        strategy6: 'beats34_two_chord',
+        strategy7: 'beat4_pickup',
+        strategy8: 'beats234_walk'
+      };
+      this.insertPassingIntoBar(
+        measureBeatGrids[0],
+        measures[0],
+        targetChordX,
+        techniqueId,
+        subMap[strategy] || 'beats34_two_chord'
+      );
+
+      // On 2-bar loops, include turnaround in Bar 2 back to Bar 1 on turnaround strategies
+      if (
+        numMeasures === 2 &&
+        canTurnaroundFinalBar &&
+        (strategy === 'strategy1' || strategy === 'strategy6' || strategy === 'strategy8')
+      ) {
+        this.applyTurnaroundToFinalBar(
+          measureBeatGrids[1],
+          measures[1],
+          loopDestinationChord,
+          techniqueId,
+          strategy === 'strategy6' ? 'beat4_pickup' : 'auto'
+        );
+      }
+      return this.compressBeatGrids(measureBeatGrids);
+    }
+
+    // =========================================================================
+    // CASE 3: Standard Runway Replacement (canReplaceR1Full is true)
+    // =========================================================================
+    if (canReplaceR1Full) {
+      const barR1 = measureBeatGrids[r1Idx];
+      const origR1Chord = barR1[0].chord;
+      const singleStepCell =
+        origR1Chord.toString() === step1.toString() ? twoChordCell : [step1];
+
+      const applyOneBarRunway = (strat: string) => {
+        if (density === 'SPARSE') {
+          if (strat === 'strategy1') {
+            this.fillBarBeats(barR1, isTwoFiveFamily ? twoChordCell : singleStepCell, 'standard');
+          } else if (strat === 'strategy2') {
+            this.fillBarBeats(barR1, singleStepCell, 'standard');
+          } else if (strat === 'strategy3') {
+            this.fillBarBeats(barR1, [origR1Chord, step1], 'standard');
+          } else if (strat === 'strategy4') {
+            this.fillBarBeats(barR1, [origR1Chord, step1], 'late');
+          } else {
+            this.fillBarBeats(barR1, twoChordCell, 'standard');
+          }
+          return;
+        }
+
+        if (density === 'DENSE') {
+          if (strat === 'strategy1') {
+            this.fillBarBeats(barR1, barR1.length === 3 ? threeChordCell : fourChordCell, 'standard');
+          } else if (strat === 'strategy2') {
+            this.fillBarBeats(barR1, threeChordCell, 'standard');
+          } else {
+            this.fillBarBeats(barR1, twoChordCell, 'standard');
+          }
+          return;
+        }
+
+        // Autonomous Curated Variations across Strategies:
+        const prevBarChord = r2Idx >= 0 ? measureBeatGrids[r2Idx]?.[0]?.chord : null;
+        const collidesWithPrevBarRoot =
+          prevBarChord !== null &&
+          twoChordCell.length >= 2 &&
+          prevBarChord.root === twoChordCell[0].root &&
+          origR1Chord.root !== targetChordX.root;
+
+        if (strat === 'strategy1') {
+          if (techniqueId === 'side_step_two_five') {
+            this.fillBarBeats(barR1, fourChordCell, 'standard');
+          } else if (isTwoFiveFamily && collidesWithPrevBarRoot && origR1Chord.root !== twoChordCell[0].root) {
+            // Preserve distinct harmonic chord in barR1 on Beats 1-2 and place [ii, V] of Target X on Beats 3-4
+            this.fillBarBeats(barR1, [origR1Chord, twoChordCell[0], twoChordCell[1]], 'standard');
+          } else {
+            this.fillBarBeats(
+              barR1,
+              isTwoFiveFamily || techniqueId === 'circle_of_fifths' ? twoChordCell : singleStepCell,
+              'standard'
+            );
+          }
+        } else if (strat === 'strategy3') {
+          // Full-bar Cadence Approach in the bar before Target X
+          this.fillBarBeats(
+            barR1,
+            techniqueId === 'side_step_two_five'
+              ? fourChordCell
+              : (isTwoFiveFamily || techniqueId === 'circle_of_fifths' ? twoChordCell : singleStepCell),
+            'standard'
+          );
+        } else if (strat === 'strategy6') {
+          // Half-Bar Hold + Approach on Beats 3-4 into Target X
+          if (isTwoFiveFamily && r2Idx >= 0 && !lockedSet.has(r2Idx)) {
+            this.insertPassingIntoBar(
+              measureBeatGrids[r2Idx],
+              measures[r2Idx],
+              origR1Chord,
+              techniqueId,
+              'beats34_two_chord'
+            );
+          }
+          this.fillBarBeats(
+            barR1,
+            isTwoFiveFamily ? [origR1Chord, twoChordCell[0], twoChordCell[1]] : [origR1Chord, step1],
+            'standard'
+          );
+        } else if (strat === 'strategy7') {
+          // Extended Approach into Target X
+          if (techniqueId === 'side_step_two_five') {
+            const ssBelowV = this.side_step_below(step1);
+            const ssBelowII = this.side_step_below(step2);
+            this.fillBarBeats(barR1, [ssBelowII, ssBelowV, step2, step1], 'standard');
+          } else if (isTwoFiveFamily) {
+            this.fillBarBeats(barR1, fourChordCell, 'standard');
+          } else {
+            this.fillBarBeats(barR1, threeChordCell, 'standard');
+          }
         } else {
-          this.fillBarBeats(bar, [homeChord, step1], 'standard');
+          // Strategy 8: Full Passing / Walk Momentum into Target X
+          if (isTwoFiveFamily && origR1Chord.root !== twoChordCell[0].root) {
+            this.fillBarBeats(barR1, [origR1Chord, twoChordCell[0], twoChordCell[1]], 'standard');
+          } else {
+            this.fillBarBeats(barR1, barR1.length === 3 ? threeChordCell : fourChordCell, 'standard');
+          }
+        }
+      };
+
+      const useThreeBarChain =
+        canReplaceR3Full &&
+        (strategy === 'strategy1' || strategy === 'strategy6' || strategy === 'strategy8');
+
+      const useTwoBarChain =
+        canReplaceR2Full &&
+        (density === 'DENSE'
+          ? (strategy !== 'strategy2' && strategy !== 'strategy3')
+          : (strategy === 'strategy6' || strategy === 'strategy8'));
+
+      if (useThreeBarChain && r3Idx >= 0 && r2Idx >= 0) {
+        const barR3 = measureBeatGrids[r3Idx];
+        const barR2 = measureBeatGrids[r2Idx];
+        if (this.isDarkTechnique(techniqueId)) {
+          return this.reharmonizeProgressionDarkWithLocks(measures, techniqueId, strategy, lockedSet, targetMIdx);
+        }
+        if (strategy === 'strategy1') {
+          this.fillBarBeats(barR3, [step4], 'standard');
+          this.fillBarBeats(barR2, [step3, step2], 'standard');
+          this.fillBarBeats(barR1, [step2, step1], 'standard');
+        } else if (strategy === 'strategy6') {
+          this.fillBarBeats(barR3, [step4, step3], 'standard');
+          this.fillBarBeats(barR2, [step3, step2], 'standard');
+          this.fillBarBeats(barR1, [step1], 'standard');
+        } else {
+          this.fillBarBeats(barR3, [step4, step3], 'standard');
+          this.fillBarBeats(barR2, [step2], 'standard');
+          this.fillBarBeats(barR1, twoChordCell, 'standard');
+        }
+      } else if (useTwoBarChain && r2Idx >= 0) {
+        const barR2 = measureBeatGrids[r2Idx];
+        const origR2Chord = barR2[0].chord;
+        if (strategy === 'strategy6') {
+          this.fillBarBeats(barR2, [origR2Chord, isTwoFiveFamily ? step3 : step2], 'standard');
+          this.fillBarBeats(barR1, isTwoFiveFamily ? [step2, step1] : [step1], 'standard');
+        } else {
+          this.fillBarBeats(barR2, [step4, step3], 'standard');
+          this.fillBarBeats(barR1, [step2, step1], 'standard');
+        }
+      } else {
+        // 1-Bar Runway in r1Idx (all earlier bars keep their own original chords!)
+        applyOneBarRunway(strategy);
+      }
+    }
+
+    // =========================================================================
+    // RULE 3: AUTONOMOUS PASSING CHORDS ON STATIC HELD BARS
+    // Automatically subdivides static held internal measures on Beats 3 & 4
+    // =========================================================================
+    if (mode === 'HYBRID') {
+      for (let mIdx = 0; mIdx < numMeasures - 1; mIdx++) {
+        if (mIdx === targetMIdx || mIdx === r1Idx || lockedSet.has(mIdx)) continue;
+
+        const nextMIdx = mIdx + 1;
+        const nextChord = measureBeatGrids[nextMIdx]?.[0]?.chord;
+        const curChord = measureBeatGrids[mIdx]?.[0]?.chord;
+        if (!nextChord || !curChord) continue;
+
+        const isSingleHeldBar = measures[mIdx].length === 1;
+        const isStaticRepeatBar =
+          isSingleHeldBar &&
+          measures[nextMIdx]?.length === 1 &&
+          measures[mIdx][0].chord === measures[nextMIdx][0].chord;
+
+        let shouldInsert = false;
+        if (nextChord.quality === 'm7b5' || nextChord.quality === '°7') {
+          shouldInsert = false;
+        } else if (isStaticRepeatBar) {
+          shouldInsert = strategy === 'strategy7' || strategy === 'strategy8';
+        } else if (isTwoFiveFamily) {
+          shouldInsert = strategy === 'strategy8';
+        } else if (mIdx > 0) {
+          shouldInsert = strategy === 'strategy7' || strategy === 'strategy8';
+        }
+
+        if (shouldInsert) {
+          const hybridSubStyle: 'beat4_pickup' | 'beats34_single' | 'beats34_two_chord' =
+            isTwoFiveFamily
+              ? 'beats34_two_chord'
+              : density === 'SPARSE'
+                ? 'beat4_pickup'
+                : density === 'DENSE'
+                  ? 'beats34_two_chord'
+                  : (strategy === 'strategy8' ? 'beats34_single' : 'beat4_pickup');
+
+          this.insertPassingIntoBar(
+            measureBeatGrids[mIdx],
+            measures[mIdx],
+            nextChord,
+            techniqueId,
+            hybridSubStyle
+          );
         }
       }
     }
 
+    // =========================================================================
+    // RULE 4: AUTONOMOUS TURNAROUND / TURN-BACK ENGINE ON FINAL MEASURE
+    // Treats Bar 1, Beat 1 (loopDestinationChord) as implicit Target X for the end of the phrase
+    // on Turnaround strategies (strategy1, strategy6, strategy8).
+    // (Note: strategy2 & strategy5 already returned Pure Loop Turnarounds above,
+    //  while strategy3, strategy4, strategy7 keep the ending as-is.)
+    // =========================================================================
+    if (
+      canTurnaroundFinalBar &&
+      (strategy === 'strategy1' || strategy === 'strategy6' || strategy === 'strategy8')
+    ) {
+      const turnStyle = strategy === 'strategy6' ? 'two_chord' : 'auto';
+      this.applyTurnaroundToFinalBar(
+        measureBeatGrids[finalMIdx],
+        measures[finalMIdx],
+        loopDestinationChord,
+        techniqueId,
+        turnStyle
+      );
+    }
+
+    return this.compressBeatGrids(measureBeatGrids);
+  }
+
+  static compressBeatGrids(measureBeatGrids: BeatSlot[][]): ChordBeatItem[][] {
     return measureBeatGrids.map(grid => {
       const compressed: ChordBeatItem[] = [];
       grid.forEach(slot => {
         const sym = slot.chord.toString();
         if (compressed.length > 0 && compressed[compressed.length - 1].chord === sym) {
           compressed[compressed.length - 1].beats += 1;
+          if (slot.isTurnaround) {
+            compressed[compressed.length - 1].isTurnaround = true;
+          }
         } else {
-          compressed.push({ chord: sym, beats: 1 });
+          compressed.push({
+            chord: sym,
+            beats: 1,
+            ...(slot.isTurnaround ? { isTurnaround: true } : {})
+          });
         }
       });
       return compressed;
@@ -801,6 +1652,22 @@ export class TargetBackwardEngine {
     techniqueId = 'dorian_dark',
     strategy = 'strategy1'
   ): ChordBeatItem[][] {
+    return this.reharmonizeProgressionDarkWithLocks(
+      measures,
+      techniqueId,
+      strategy,
+      new Set<number>(),
+      Math.max(0, (measures?.length || 1) - 1)
+    );
+  }
+
+  static reharmonizeProgressionDarkWithLocks(
+    measures: ChordBeatItem[][],
+    techniqueId = 'dorian_dark',
+    strategy = 'strategy1',
+    lockedSet: Set<number> = new Set<number>(),
+    explicitTargetMIdx?: number
+  ): ChordBeatItem[][] {
     if (!measures || measures.length === 0) return [];
 
     const measureBeatGrids: BeatSlot[][] = measures.map(meas => {
@@ -815,7 +1682,10 @@ export class TargetBackwardEngine {
     });
 
     const numMeasures = measureBeatGrids.length;
-    const targetMIdx = numMeasures - 1;
+    const targetMIdx =
+      explicitTargetMIdx !== undefined && explicitTargetMIdx >= 0 && explicitTargetMIdx < numMeasures
+        ? explicitTargetMIdx
+        : numMeasures - 1;
     const H = measureBeatGrids[0][0].chord.root;
     const pal = this.buildDarkPalette(H);
 
@@ -1046,62 +1916,74 @@ export class TargetBackwardEngine {
     const b2Seq = bar2Choices[strategy] || bar2Choices.strategy1;
 
     if (targetMIdx >= 3) {
-      this.fillBarBeats(measureBeatGrids[targetMIdx - 3], b0Seq, 'standard');
-      this.fillBarBeats(measureBeatGrids[targetMIdx - 2], b1Seq, 'standard');
-      this.fillBarBeats(measureBeatGrids[targetMIdx - 1], b2Seq, 'standard');
-      this.fillDarkTargetBar(measureBeatGrids[targetMIdx], H, techniqueId, strategy);
+      if (!lockedSet.has(targetMIdx - 3)) this.fillBarBeats(measureBeatGrids[targetMIdx - 3], b0Seq, 'standard');
+      if (!lockedSet.has(targetMIdx - 2)) this.fillBarBeats(measureBeatGrids[targetMIdx - 2], b1Seq, 'standard');
+      if (!lockedSet.has(targetMIdx - 1)) this.fillBarBeats(measureBeatGrids[targetMIdx - 1], b2Seq, 'standard');
+      if (!lockedSet.has(targetMIdx)) this.fillDarkTargetBar(measureBeatGrids[targetMIdx], H, techniqueId, strategy);
     } else if (targetMIdx === 2) {
-      this.fillBarBeats(measureBeatGrids[0], b0Seq, 'standard');
-      this.fillBarBeats(measureBeatGrids[1], b2Seq, 'standard');
-      this.fillDarkTargetBar(measureBeatGrids[2], H, techniqueId, strategy);
+      if (!lockedSet.has(0)) this.fillBarBeats(measureBeatGrids[0], b0Seq, 'standard');
+      if (!lockedSet.has(1)) this.fillBarBeats(measureBeatGrids[1], b2Seq, 'standard');
+      if (!lockedSet.has(2)) this.fillDarkTargetBar(measureBeatGrids[2], H, techniqueId, strategy);
     } else if (targetMIdx === 1) {
       const combinedBar0 = b0Seq.length === 1 && b1Seq.length >= 1
         ? [b0Seq[0], b1Seq[0], ...(b2Seq.slice(-1))]
         : b2Seq;
-      this.fillBarBeats(measureBeatGrids[0], combinedBar0, 'standard');
-      this.fillDarkTargetBar(measureBeatGrids[1], H, techniqueId, strategy);
+      if (!lockedSet.has(0)) this.fillBarBeats(measureBeatGrids[0], combinedBar0, 'standard');
+      if (!lockedSet.has(1)) this.fillDarkTargetBar(measureBeatGrids[1], H, techniqueId, strategy);
     } else {
-      this.fillBarBeats(measureBeatGrids[0], [b0Seq[0], ...b2Seq.slice(-2)], 'standard');
+      if (!lockedSet.has(0)) this.fillBarBeats(measureBeatGrids[0], [b0Seq[0], ...b2Seq.slice(-2)], 'standard');
     }
 
-    return measureBeatGrids.map(grid => {
-      const compressed: ChordBeatItem[] = [];
-      grid.forEach(slot => {
-        const sym = slot.chord.toString();
-        if (compressed.length > 0 && compressed[compressed.length - 1].chord === sym) {
-          compressed[compressed.length - 1].beats += 1;
-        } else {
-          compressed.push({ chord: sym, beats: 1 });
-        }
-      });
-      return compressed;
-    });
+    const finalIdx = numMeasures - 1;
+    if (
+      !lockedSet.has(finalIdx) &&
+      measureBeatGrids[finalIdx] &&
+      measureBeatGrids[finalIdx].length >= 2 &&
+      (strategy === 'strategy1' || strategy === 'strategy2' || strategy === 'strategy6' || strategy === 'strategy8')
+    ) {
+      const fGrid = measureBeatGrids[finalIdx];
+      fGrid[fGrid.length - 1].isTurnaround = true;
+    }
+
+    return this.compressBeatGrids(measureBeatGrids);
   }
 
   static executeSinglePhraseReharm(
     measures: ChordBeatItem[][],
     techniqueId: string,
-    strategy: string
+    strategy: string,
+    options: ReharmExecutionOptions = {}
   ): ChordBeatItem[][] {
     if (!techniqueId || techniqueId === 'default') {
       return measures.map(m => m.map(c => ({ ...c })));
     }
-    if (this.isDarkTechnique(techniqueId)) {
-      return this.reharmonizeProgressionDark(measures, techniqueId, strategy);
+    const mode: ReharmMode = options.mode || 'APPROACH_TARGETING';
+    if (mode === 'FULL_REFRAME' && this.isDarkTechnique(techniqueId)) {
+      const lockedSet = new Set(options.lockedMeasures || []);
+      const targetMIdx = this.resolveTargetMeasureIndex(measures.length, options.targetIndex);
+      return this.reharmonizeProgressionDarkWithLocks(measures, techniqueId, strategy, lockedSet, targetMIdx);
     }
-    return this.reharmonizeProgressionBackward(measures, techniqueId, strategy);
+    return this.reharmonizeProgressionBackward(measures, techniqueId, strategy, options);
   }
 
   static executeReharm(
     measures: ChordBeatItem[][],
     techniqueId: string,
-    strategy: string
+    strategy: string,
+    options: ReharmExecutionOptions = {}
   ): ChordBeatItem[][] {
     if (!measures || measures.length === 0) return [];
     if (!techniqueId || techniqueId === 'default') {
       return measures.map(m => m.map(c => ({ ...c })));
     }
-    if (measures.length > 4) {
+
+    const hasExplicitTarget =
+      options.targetIndex !== undefined &&
+      options.targetIndex !== null &&
+      options.targetIndex >= 0 &&
+      options.targetIndex < measures.length;
+
+    if (!hasExplicitTarget && measures.length > 4) {
       let splitIdx = Math.ceil(measures.length / 2);
       if (measures.length === 9) {
         splitIdx = 3;
@@ -1110,15 +1992,71 @@ export class TargetBackwardEngine {
       } else if (measures.length > 8) {
         splitIdx = 4;
       }
-      const firstPart = this.executeReharm(measures.slice(0, splitIdx), techniqueId, strategy);
-      const restPart = this.executeReharm(measures.slice(splitIdx), techniqueId, strategy);
+
+      const locked = options.lockedMeasures || [];
+      const firstLocks = locked.filter(m => m < splitIdx);
+      const restLocks = locked.filter(m => m >= splitIdx).map(m => m - splitIdx);
+      const rootHomeChord = options.loopTargetChord || Chord.fromSymbol(measures[0][0].chord);
+
+      const firstPart = this.executeReharm(
+        measures.slice(0, splitIdx),
+        techniqueId,
+        strategy,
+        {
+          ...options,
+          targetIndex: null,
+          lockedMeasures: firstLocks,
+          disableTurnaround: true
+        }
+      );
+      const restPart = this.executeReharm(
+        measures.slice(splitIdx),
+        techniqueId,
+        strategy,
+        {
+          ...options,
+          targetIndex: null,
+          lockedMeasures: restLocks,
+          loopTargetChord: rootHomeChord
+        }
+      );
       return [...firstPart, ...restPart];
     }
-    return this.executeSinglePhraseReharm(measures, techniqueId, strategy);
+    return this.executeSinglePhraseReharm(measures, techniqueId, strategy, options);
+  }
+
+  static executeReharmRequest(request: ReharmRequest): ChordSlot[] {
+    const measures = this.slotsToMeasures(request.progression);
+    const lockedMeasures: number[] = [];
+    request.progression.forEach(s => {
+      if (s.isUserFixed) {
+        const mIdx = Math.max(0, s.measure - 1);
+        if (!lockedMeasures.includes(mIdx)) lockedMeasures.push(mIdx);
+      }
+    });
+    const outMeasures = this.executeReharm(
+      measures,
+      request.techniqueId || 'standard_two_five',
+      request.strategy || 'strategy1',
+      {
+        mode: request.mode,
+        density: request.density,
+        targetIndex: request.targetIndex ?? null,
+        lockedMeasures,
+        meter: request.meter
+      }
+    );
+    return this.parseProgressionToSlots(outMeasures, {
+      mode: request.mode,
+      density: request.density,
+      targetIndex: request.targetIndex ?? null,
+      lockedMeasures,
+      meter: request.meter
+    });
   }
 }
 
-const DEFAULT_PROGRESSIONS = [
+const LEGACY_JAZZ_FROM_BASIC = [
   "Dm7 | G7 | Cmaj7 | Cmaj7",
   "Gm7(b5) | C7alt | Fm7 | Fm7",
   "Bbmaj7 | Gm7 | Cm7 | F7",
@@ -1141,6 +2079,61 @@ const DEFAULT_PROGRESSIONS = [
   "Fmaj7 | F#dim7 | Gm7 | G#dim7 | Am7 | Am7"
 ];
 
+const DEFAULT_BASIC_PROGRESSIONS = [
+  "C | Am | Dm | G",
+  "C | G | Am | F",
+  "C | F | G | G",
+  "C | F | C | G",
+  "F | C | G | Am",
+  "Am | F | C | G",
+  "G | Am | F | C",
+  "C | Em | Am | F",
+  "C | G | F | C",
+  "F | C",
+  "Bb | F | C | C",
+  "C | G/B | Am | F",
+  "C | Bb | F/A | Ab",
+  "C | Em7 | F | D7/F#",
+  "C7 | G7 | F7 | C7",
+  "C7 | F7 | C7 | G7 | F7 | C7",
+  "C7 | C7 | C7 | C7 | F7 | F7 | C7 | C7 | G7 | F7 | C7 | G7",
+  "C | Dm | Em | F | G | Am | Bdim | Bdim",
+  "C | Dm | Em | F | G7 | Am",
+  "Cm | Ddim | Eb | Fm | Gm | Ab | Bb | Bb"
+];
+
+const DEFAULT_JAZZ_PROGRESSIONS = [
+  "Dm7 | G7 | Cmaj7 | Cmaj7",
+  "Dm7b5 | G7 | Cm7 | Cm7",
+  "Gm7(b5) | C7alt | Fm7 | Fm7",
+  "C | Am7 | Dm7 | G7",
+  "Bbmaj7 | Gm7 | Cm7 | F7",
+  "Em7 | A7 | Dm7 | G7",
+  "E7 | A7 | D7 | G7",
+  "Cmaj7 | Ebmaj7 | Abmaj7 | Dbmaj7",
+  "Fmaj7 | Em7 | Am7 | G7",
+  "Am7 | Dm7 | G9 | Cmaj7",
+  "Cmaj7 | Bb7 | Fmaj7 | Fm7",
+  "Bb7 | Cmaj7",
+  "Cmaj7 | Fmaj7",
+  "Bbmaj7 | Ebmaj7",
+  "F7 | Bb7 | Ebmaj7 | Ebmaj7",
+  "Am7 | Ab7 | Gmaj7 | Gmaj7",
+  "Abmaj7 | Abm7 | Ebmaj7 | Ebmaj7",
+  "Cmaj7 | D7 | Dm7 | G7",
+  "Fmaj7 | A7 | Dm7 | Dm7",
+  "Cm7 | F7 | Gmaj7 | Gmaj7",
+  "Am7 | G7 | F7 | E7",
+  "Gm | Gm(maj7) | Gm7 | Gm6",
+  "Dm7 | Em7",
+  "Fmaj7 | F#dim7 | Gm7 | G#dim7 | Am7 | Am7",
+  "Cmaj7 | Eb7 | Abmaj7 | B7 | Emaj7 | G7 | Cmaj7 | Cmaj7",
+  "Dm7 | G7 | Cmaj7 | Cm7 | F7 | Bbmaj7 | Bbm7 | Eb7 | Abmaj7 | Abmaj7",
+  "Bb7 | Eb7 | Bb7 | Bb7 | Eb7 | Eb7 | Bb7 | G7 | Cm7 | F7 | Bb7 | F7",
+  "Fmaj7 | Em7(b5) | A7 | Dm7 | G7 | Cm7 | F7 | Bbmaj7 | Bbm7 | Eb7 | Am7 | D7 | Gm7 | C7 | Fmaj7 | D7 | Gm7 | C7",
+  "Cmaj7 | Am7 | Dm7 | G7 | Em7 | A7 | Dm7 | G7 | Gm7 | C7 | Fmaj7 | Fm7 | Em7 | A7 | Dm7 | G7"
+];
+
 const DEFAULT_SAVED_PROGRESSIONS = [
   "Em | F | Em | Em",
   "Em | F | B7 | C",
@@ -1159,6 +2152,11 @@ const DEFAULT_SAVED_PROGRESSIONS = [
   "Dm | Dm(maj7) | Dm7 | Dm6 | C#°7 | C#°7",
   "Cm | Eb+ | Fm | G",
   "Dm | G#"
+];
+
+const DEFAULT_PROGRESSIONS = [
+  ...DEFAULT_JAZZ_PROGRESSIONS,
+  ...DEFAULT_BASIC_PROGRESSIONS
 ];
 
 // Maps only legacy odd-measure default progressions to their even-measure versions
@@ -1283,11 +2281,9 @@ function highlightPlayingStep(measureIdx: number | null, chordIdx: number | null
   allMeasureBoxes.forEach(box => {
     const mIdx = Number(box.getAttribute('data-measure-box'));
     if (measureIdx !== null && mIdx === measureIdx) {
-      box.classList.add('border-sky-500', 'dark:border-[#38bdf8]', 'ring-1', 'ring-sky-500/40', 'dark:ring-[#38bdf8]/40');
-      box.classList.remove('border-slate-300', 'dark:border-[#0c4a6e]');
+      box.classList.add('ring-2', 'ring-sky-500', 'dark:ring-[#38bdf8]');
     } else {
-      box.classList.remove('border-sky-500', 'dark:border-[#38bdf8]', 'ring-1', 'ring-sky-500/40', 'dark:ring-[#38bdf8]/40');
-      box.classList.add('border-slate-300', 'dark:border-[#0c4a6e]');
+      box.classList.remove('ring-2', 'ring-sky-500', 'dark:ring-[#38bdf8]');
     }
   });
 
@@ -1335,6 +2331,16 @@ function updateTransportUI(isPlaying = audioEngine.getIsPlaying()) {
   }
 }
 
+function getReharmOptions(): ReharmExecutionOptions {
+  return {
+    mode: state.reharmMode,
+    density: state.reharmDensity,
+    targetIndex: state.targetMeasureIdx,
+    lockedMeasures: state.lockedMeasures,
+    meter: state.meter
+  };
+}
+
 function getDisplayedMeasures(): ChordBeatItem[][] {
   const baseMeasures = parseInputByMeasures(state.baseProgression);
   if (!baseMeasures || baseMeasures.length === 0) return [];
@@ -1342,7 +2348,8 @@ function getDisplayedMeasures(): ChordBeatItem[][] {
     ? TargetBackwardEngine.executeReharm(
         baseMeasures,
         state.selectedTechnique,
-        state.selectedStrategy
+        state.selectedStrategy,
+        getReharmOptions()
       )
     : baseMeasures;
 }
@@ -1420,15 +2427,124 @@ function migrateLegacyDefaultProgression(rawStr: string): string {
   return LEGACY_DEFAULT_ODD_TO_EVEN_MAP[norm] || norm;
 }
 
+const LEGACY_JAZZ_FROM_BASIC_SET = new Set(
+  LEGACY_JAZZ_FROM_BASIC.map(normalizeProgressionString)
+);
+
+function dedupeProgressions(list: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of list) {
+    const norm = migrateLegacyDefaultProgression(String(item || ''));
+    if (norm && !seen.has(norm)) {
+      seen.add(norm);
+      out.push(norm);
+    }
+  }
+  return out;
+}
+
+function inferProgressionCategory(progStr: string): SavedSectionKey {
+  if (!progStr) return 'basic';
+  const hasJazzQuality = /(maj7|Δ|m7b5|m7\(b5\)|7alt|7\(b9\)|7b9|7\+|m\(maj7\)|dim7|°7|ø|m6|9|11|13)/i.test(
+    progStr
+  );
+  if (hasJazzQuality) return 'jazz';
+  const m7Matches = progStr.match(/[A-G][#b]?m7\b/g);
+  if (m7Matches && m7Matches.length >= 2) return 'jazz';
+  return 'basic';
+}
+
+function migrateSavedSections(
+  rawSections: Partial<SavedSections> | undefined
+): { sections: SavedSections; didMigrateJazzSplit: boolean } {
+  const defaultBasic = DEFAULT_BASIC_PROGRESSIONS.map(normalizeProgressionString);
+  const defaultJazz = DEFAULT_JAZZ_PROGRESSIONS.map(normalizeProgressionString);
+  const defaultDark = DEFAULT_SAVED_PROGRESSIONS.map(normalizeProgressionString);
+
+  if (!rawSections || !Array.isArray(rawSections.basic) || !Array.isArray(rawSections.dark)) {
+    return {
+      sections: {
+        basic: dedupeProgressions(defaultBasic),
+        jazz: dedupeProgressions(defaultJazz),
+        dark: dedupeProgressions(defaultDark)
+      },
+      didMigrateJazzSplit: false
+    };
+  }
+
+  const incomingBasic = dedupeProgressions(rawSections.basic);
+  const incomingDark = dedupeProgressions(rawSections.dark);
+  const hasJazzArray = Array.isArray(rawSections.jazz) && rawSections.jazz.length > 0;
+
+  if (!hasJazzArray) {
+    // Migrate legacy 2-category vault (Basic + Dark) -> 3-category vault (Basic + Jazz + Dark):
+    // Move legacy jazz defaults out of Basic into Jazz, preserve any user-added progressions in Basic,
+    // and populate Basic and Jazz with all new non-duplicate progressions.
+    const userAddedBasic = incomingBasic.filter(p => !LEGACY_JAZZ_FROM_BASIC_SET.has(p));
+    const movedJazz = incomingBasic.filter(p => LEGACY_JAZZ_FROM_BASIC_SET.has(p));
+
+    return {
+      sections: {
+        basic: dedupeProgressions([...userAddedBasic, ...defaultBasic]),
+        jazz: dedupeProgressions([...defaultJazz, ...movedJazz]),
+        dark: incomingDark.length > 0 ? incomingDark : dedupeProgressions(defaultDark)
+      },
+      didMigrateJazzSplit: true
+    };
+  }
+
+  const incomingJazz = dedupeProgressions(rawSections.jazz || []);
+  // Ensure if any legacy jazz defaults were still stranded in basic without the new basic defaults, clean them up
+  const stillHasLegacyOnlyBasic =
+    incomingBasic.length > 0 &&
+    incomingBasic.every(p => LEGACY_JAZZ_FROM_BASIC_SET.has(p));
+
+  if (stillHasLegacyOnlyBasic) {
+    return {
+      sections: {
+        basic: dedupeProgressions(defaultBasic),
+        jazz: dedupeProgressions([...incomingJazz, ...defaultJazz]),
+        dark: incomingDark
+      },
+      didMigrateJazzSplit: true
+    };
+  }
+
+  return {
+    sections: {
+      basic: incomingBasic.includes('C | Am | Dm | G')
+        ? incomingBasic
+        : ['C | Am | Dm | G', ...incomingBasic],
+      jazz: incomingJazz,
+      dark: incomingDark
+    },
+    didMigrateJazzSplit: false
+  };
+}
+
+function migrateBaseProgressionsPool(rawPool: unknown[] | undefined, didMigrateJazzSplit: boolean): string[] {
+  const defaultPool = dedupeProgressions(DEFAULT_PROGRESSIONS);
+  if (!Array.isArray(rawPool) || rawPool.length === 0) {
+    return defaultPool;
+  }
+  const cleaned = dedupeProgressions(rawPool.map(p => String(p)));
+  if (didMigrateJazzSplit) {
+    return dedupeProgressions([...cleaned, ...defaultPool]);
+  }
+  return cleaned.length > 0 ? cleaned : defaultPool;
+}
+
 function loadInitialVaultSync(): VaultPayload {
   const defaultPayload: VaultPayload = {
     updatedAt: 0,
     theme: 'dark',
     savedSections: {
-      basic: DEFAULT_PROGRESSIONS.map(normalizeProgressionString),
-      dark: DEFAULT_SAVED_PROGRESSIONS.map(normalizeProgressionString)
+      basic: dedupeProgressions(DEFAULT_BASIC_PROGRESSIONS),
+      jazz: dedupeProgressions(DEFAULT_JAZZ_PROGRESSIONS),
+      dark: dedupeProgressions(DEFAULT_SAVED_PROGRESSIONS)
     },
-    baseProgressionsPool: DEFAULT_PROGRESSIONS.map(normalizeProgressionString)
+    baseProgressionsPool: dedupeProgressions(DEFAULT_PROGRESSIONS)
   };
 
   try {
@@ -1442,15 +2558,20 @@ function loadInitialVaultSync(): VaultPayload {
         Array.isArray(parsed.savedSections.dark) &&
         Array.isArray(parsed.baseProgressionsPool)
       ) {
-        return {
-          updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : Date.now(),
+        const { sections, didMigrateJazzSplit } = migrateSavedSections(parsed.savedSections);
+        const migratedPool = migrateBaseProgressionsPool(parsed.baseProgressionsPool, didMigrateJazzSplit);
+        const payload: VaultPayload = {
+          updatedAt: didMigrateJazzSplit
+            ? Date.now()
+            : (typeof parsed.updatedAt === 'number' ? parsed.updatedAt : Date.now()),
           theme: parsed.theme === 'light' ? 'light' : 'dark',
-          savedSections: {
-            basic: parsed.savedSections.basic.map(p => migrateLegacyDefaultProgression(String(p))).filter(Boolean),
-            dark: parsed.savedSections.dark.map(p => migrateLegacyDefaultProgression(String(p))).filter(Boolean)
-          },
-          baseProgressionsPool: parsed.baseProgressionsPool.map(p => migrateLegacyDefaultProgression(String(p))).filter(Boolean)
+          savedSections: sections,
+          baseProgressionsPool: migratedPool
         };
+        if (didMigrateJazzSplit) {
+          localStorage.setItem(VAULT_LS_KEY, JSON.stringify(payload));
+        }
+        return payload;
       }
     }
 
@@ -1458,19 +2579,19 @@ function loadInitialVaultSync(): VaultPayload {
     const legacySaved = localStorage.getItem('reharmpro_saved_sections_v3');
     const legacyPool = localStorage.getItem('reharmpro_base_pool_v2');
     if (legacySaved || legacyPool) {
+      let didMigrate = false;
       if (legacySaved) {
         const pSaved = JSON.parse(legacySaved);
         if (pSaved && Array.isArray(pSaved.basic) && Array.isArray(pSaved.dark)) {
-          defaultPayload.savedSections = {
-            basic: pSaved.basic.map((p: unknown) => migrateLegacyDefaultProgression(String(p))).filter(Boolean),
-            dark: pSaved.dark.map((p: unknown) => migrateLegacyDefaultProgression(String(p))).filter(Boolean)
-          };
+          const { sections, didMigrateJazzSplit } = migrateSavedSections(pSaved);
+          defaultPayload.savedSections = sections;
+          didMigrate = didMigrateJazzSplit;
         }
       }
       if (legacyPool) {
         const pPool = JSON.parse(legacyPool);
         if (Array.isArray(pPool) && pPool.length > 0) {
-          defaultPayload.baseProgressionsPool = pPool.map((p: unknown) => migrateLegacyDefaultProgression(String(p))).filter(Boolean);
+          defaultPayload.baseProgressionsPool = migrateBaseProgressionsPool(pPool, didMigrate);
         }
       }
       defaultPayload.updatedAt = Date.now();
@@ -1483,21 +2604,27 @@ function loadInitialVaultSync(): VaultPayload {
 
 const initialVault = loadInitialVaultSync();
 
+const DEFAULT_START_PROGRESSION = 'C | Am | Dm | G';
+
 const state = {
   currentScreen: 'generator' as 'generator' | 'saved',
-  // Clean base progression initialized to the first progression in the randomizer's chord progression set
-  baseProgression: initialVault.baseProgressionsPool[0] || DEFAULT_PROGRESSIONS[0],
+  // Clean base progression initialized to C | Am | Dm | G
+  baseProgression: DEFAULT_START_PROGRESSION,
   userChangedBaseProgression: false,
   meter: 4,
   manualMeterOverride: false,
   reharmSet: 'basic' as 'basic' | 'dark',
   selectedTechnique: 'default',
   selectedStrategy: 'strategy1',
+  reharmMode: 'HYBRID' as ReharmMode,
+  reharmDensity: 'BALANCED' as ReharmDensity,
+  targetMeasureIdx: null as number | null,
+  lockedMeasures: [] as number[],
   reharmActive: false,
   strategyCycleIndex: 0,
   editingBaseIdx: null as number | null,
   editingSavedKey: null as string | null,
-  activeSavedSection: null as 'basic' | 'dark' | null,
+  activeSavedSection: null as SavedSectionKey | null,
   lastFormattedOutput: '',
   theme: initialVault.theme,
   vaultUpdatedAt: initialVault.updatedAt,
@@ -1506,7 +2633,7 @@ const state = {
 };
 
 function getDefaultBaseProgression(): string {
-  return normalizeProgressionString(state.baseProgressionsPool[0] || DEFAULT_PROGRESSIONS[0]);
+  return DEFAULT_START_PROGRESSION;
 }
 
 function syncDefaultProgressionInputUI() {
@@ -1566,15 +2693,13 @@ async function syncAndHealVault() {
 
   if (newest) {
     // Self-heal state from IndexedDB or Cache Storage after browser localStorage reset
-    state.vaultUpdatedAt = newest.updatedAt;
+    const { sections, didMigrateJazzSplit } = migrateSavedSections(newest.savedSections);
+    state.vaultUpdatedAt = didMigrateJazzSplit ? Date.now() : newest.updatedAt;
     state.theme = newest.theme === 'light' ? 'light' : 'dark';
-    state.savedSections = {
-      basic: newest.savedSections.basic.map(p => migrateLegacyDefaultProgression(String(p))).filter(Boolean),
-      dark: newest.savedSections.dark.map(p => migrateLegacyDefaultProgression(String(p))).filter(Boolean)
-    };
-    state.baseProgressionsPool = newest.baseProgressionsPool.map(p => migrateLegacyDefaultProgression(String(p))).filter(Boolean);
-    if (!state.userChangedBaseProgression && state.baseProgressionsPool.length > 0) {
-      state.baseProgression = state.baseProgressionsPool[0];
+    state.savedSections = sections;
+    state.baseProgressionsPool = migrateBaseProgressionsPool(newest.baseProgressionsPool, didMigrateJazzSplit);
+    if (!state.userChangedBaseProgression) {
+      state.baseProgression = getDefaultBaseProgression();
       const input = document.getElementById('singleProgInput') as HTMLInputElement | null;
       if (input) input.value = state.baseProgression;
     }
@@ -1600,7 +2725,11 @@ async function syncAndHealVault() {
 
 function isProgressionSavedAnywhere(normProg: string): boolean {
   if (!normProg) return false;
-  return state.savedSections.basic.includes(normProg) || state.savedSections.dark.includes(normProg);
+  return (
+    state.savedSections.basic.includes(normProg) ||
+    state.savedSections.jazz.includes(normProg) ||
+    state.savedSections.dark.includes(normProg)
+  );
 }
 
 function applySmartInputShortcuts(inputEl: HTMLInputElement | null) {
@@ -1834,7 +2963,7 @@ function parseInputByMeasures(str: string): ChordBeatItem[][] {
 function formatChordHtml(str: string): string {
   if (!str) return '';
   return str.replace(
-    /\(maj7\)|7\(b5\)|\(b5\)|7alt|add2|add9|maj7|7b5|m11|dim7|9sus4|7\(b9,b13\)|7\(b9\)|7\(#9\)|7\(#11\)|7\+|°7|Δ|ø|\+|7|9|11|13|6/g,
+    /\(maj7\)|7\(b5\)|\(b5\)|7alt|add2|add9|maj7|7b5|m11|dim7|dim|9sus4|7\(b9,b13\)|7\(b9\)|7\(#9\)|7\(#11\)|7\+|°7|Δ|ø|\+|7|9|11|13|6/g,
     m => `<sup>${m}</sup>`
   );
 }
@@ -1973,7 +3102,8 @@ function renderOutput() {
     ? TargetBackwardEngine.executeReharm(
         baseMeasures,
         state.selectedTechnique,
-        state.selectedStrategy
+        state.selectedStrategy,
+        getReharmOptions()
       )
     : baseMeasures;
 
@@ -2005,21 +3135,28 @@ function renderOutput() {
       const measBoxesHtml = rowMeasures
         .map(measTokens => {
           const mIdx = measTokens[0]?.measureIdx ?? 0;
+          const chordCount = measTokens.filter(t => t.type === 'chord').length;
+          const chordSizeCls =
+            chordCount >= 4
+              ? 'text-base sm:text-xl'
+              : chordCount === 3
+                ? 'text-lg sm:text-2xl'
+                : 'text-2xl sm:text-3xl';
+          const slashSizeCls =
+            chordCount >= 3 ? 'text-base sm:text-xl' : 'text-xl sm:text-3xl';
           const measContent = measTokens
             .map(tok => {
               if (tok.type === 'slash') {
-                return `<span class="text-slate-400 dark:text-[#38bdf8]/60 font-mono-tabular text-xl sm:text-3xl font-bold select-none">/</span>`;
+                return `<span class="text-slate-400 dark:text-[#38bdf8]/60 font-mono-tabular ${slashSizeCls} font-bold select-none">/</span>`;
               }
               const formattedName = formatChordHtml(tok.val);
-              return `<span data-chord-token="1" data-measure-idx="${tok.measureIdx}" data-chord-idx="${tok.chordIdx ?? 0}" onclick="window.ReharmEngine.playChordString('${tok.val}', ${tok.beats || 2})" class="text-2xl sm:text-3xl font-black font-mono-tabular tracking-tight text-slate-900 dark:text-white hover:text-sky-600 dark:hover:text-[#38bdf8] transition-all duration-150 cursor-pointer active:scale-95 select-none inline-block">${formattedName}</span>`;
+              return `<span data-chord-token="1" data-measure-idx="${tok.measureIdx}" data-chord-idx="${tok.chordIdx ?? 0}" onclick="window.ReharmEngine.playChordString('${tok.val}', ${tok.beats || 2})" class="${chordSizeCls} font-black font-mono-tabular tracking-tight text-slate-900 dark:text-white hover:text-sky-600 dark:hover:text-[#38bdf8] transition-all duration-150 cursor-pointer active:scale-95 select-none inline-block">${formattedName}</span>`;
             })
             .join(' ');
 
           return `
-            <div data-measure-box="${mIdx}" class="flex items-center justify-center px-3 py-3 sm:px-4 sm:py-4 bg-white dark:bg-[#071d2c] border border-slate-300 dark:border-[#0c4a6e] rounded-[10px] shadow-sm w-full transition-all duration-150">
-              <div class="flex-1 flex items-center justify-between gap-2 text-left">
-                ${measContent}
-              </div>
+            <div data-measure-box="${mIdx}" class="relative flex items-center justify-between gap-1.5 sm:gap-2 px-3.5 py-3.5 sm:px-4 sm:py-4 bg-white dark:bg-[#071d2c] border border-slate-300 dark:border-[#0c4a6e] rounded-[10px] shadow-sm w-full text-left transition-all duration-150">
+              ${measContent}
             </div>
           `;
         })
@@ -2047,8 +3184,9 @@ function renderSavedProgressionsList() {
   const currentNorm = normalizeProgressionString(state.baseProgression);
 
   if (!state.activeSavedSection) {
-    const sections = [
+    const sections: { key: SavedSectionKey; title: string; list: string[] }[] = [
       { key: 'basic', title: 'Basic', list: state.savedSections.basic },
+      { key: 'jazz', title: 'Jazz', list: state.savedSections.jazz },
       { key: 'dark', title: 'Dark', list: state.savedSections.dark }
     ];
 
@@ -2075,11 +3213,30 @@ function renderSavedProgressionsList() {
     return;
   }
 
-  const secKey = state.activeSavedSection === 'dark' ? 'dark' : 'basic';
-  const secTitle = secKey === 'dark' ? 'Dark' : 'Basic';
-  const otherKey = secKey === 'dark' ? 'basic' : 'dark';
-  const otherTitle = secKey === 'dark' ? 'Basic' : 'Dark';
+  const secKey: SavedSectionKey =
+    state.activeSavedSection === 'dark'
+      ? 'dark'
+      : state.activeSavedSection === 'jazz'
+        ? 'jazz'
+        : 'basic';
+  const sectionTitles: Record<SavedSectionKey, string> = {
+    basic: 'Basic',
+    jazz: 'Jazz',
+    dark: 'Dark'
+  };
+  const secTitle = sectionTitles[secKey];
+  const otherKeys = (['basic', 'jazz', 'dark'] as SavedSectionKey[]).filter(k => k !== secKey);
   const list = state.savedSections[secKey] || [];
+
+  const otherButtonsHtml = otherKeys
+    .map(
+      k => `
+      <button type="button" onclick="window.ReharmEngine.openSavedSection('${k}')" class="py-1 px-2 rounded-[6px] text-xs font-mono-tabular font-bold text-slate-500 dark:text-slate-400 hover:text-sky-600 dark:hover:text-[#38bdf8] cursor-pointer transition-colors">
+        ${sectionTitles[k]}
+      </button>
+    `
+    )
+    .join('');
 
   const headerHtml = `
     <div class="flex items-center justify-between pb-1 shrink-0">
@@ -2087,9 +3244,9 @@ function renderSavedProgressionsList() {
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         <span>${secTitle}</span>
       </button>
-      <button type="button" onclick="window.ReharmEngine.openSavedSection('${otherKey}')" class="py-1 px-2 rounded-[6px] text-xs font-mono-tabular font-bold text-slate-500 dark:text-slate-400 hover:text-sky-600 dark:hover:text-[#38bdf8] cursor-pointer transition-colors">
-        ${otherTitle}
-      </button>
+      <div class="flex items-center gap-1">
+        ${otherButtonsHtml}
+      </div>
     </div>
   `;
 
@@ -2412,7 +3569,7 @@ function setupInteractions() {
     const iosModal = document.getElementById('iosInstallModal');
     if (iosModal && !iosModal.classList.contains('hidden')) return;
     const el = target as Element | null;
-    if (el && el.closest && el.closest('input, select, textarea, #reharmSetPopover, #reharmTechniquePopover, #reharmBtnWrapper, #transportControls')) return;
+    if (el && el.closest && el.closest('input, select, textarea, #reharmSetPopover, #reharmTechniquePopover, #reharmBtnWrapper, #transportControls, #reharmModeBar')) return;
     swipeStartX = x;
     swipeStartY = y;
     swipeLastX = x;
@@ -2595,6 +3752,8 @@ const ReharmEngine = {
       if (audioEngine.getIsPlaying()) {
         audioEngine.stop();
       }
+      state.activeSavedSection = null;
+      state.editingSavedKey = null;
       if (track) {
         track.classList.remove('translate-x-0');
         track.classList.add('-translate-x-1/2');
@@ -2630,13 +3789,17 @@ const ReharmEngine = {
     const normOut = normalizeProgressionString(state.lastFormattedOutput);
     if (!normOut) return;
     const inBasicIdx = state.savedSections.basic.indexOf(normOut);
+    const inJazzIdx = state.savedSections.jazz.indexOf(normOut);
     const inDarkIdx = state.savedSections.dark.indexOf(normOut);
 
-    if (inBasicIdx !== -1 || inDarkIdx !== -1) {
+    if (inBasicIdx !== -1 || inJazzIdx !== -1 || inDarkIdx !== -1) {
       if (inBasicIdx !== -1) state.savedSections.basic.splice(inBasicIdx, 1);
+      if (inJazzIdx !== -1) state.savedSections.jazz.splice(inJazzIdx, 1);
       if (inDarkIdx !== -1) state.savedSections.dark.splice(inDarkIdx, 1);
     } else {
-      const targetSec = state.reharmSet === 'dark' ? 'dark' : 'basic';
+      const targetSec: SavedSectionKey =
+        state.activeSavedSection ||
+        (state.reharmSet === 'dark' ? 'dark' : inferProgressionCategory(normOut));
       state.savedSections[targetSec].unshift(normOut);
     }
     persistVault();
@@ -2644,9 +3807,10 @@ const ReharmEngine = {
     renderSavedProgressionsList();
   },
 
-  openSavedSection(secKey: 'basic' | 'dark') {
+  openSavedSection(secKey: SavedSectionKey) {
     if (Date.now() < justSwipedUntil) return;
-    state.activeSavedSection = secKey === 'dark' ? 'dark' : 'basic';
+    state.activeSavedSection =
+      secKey === 'dark' ? 'dark' : secKey === 'jazz' ? 'jazz' : 'basic';
     state.editingSavedKey = null;
     renderSavedProgressionsList();
   },
@@ -2666,7 +3830,9 @@ const ReharmEngine = {
       ? formatMeasuresToString(parsed)
       : normalizeProgressionString(input.value.trim());
     if (formatted) {
-      const targetSec = state.activeSavedSection || (state.reharmSet === 'dark' ? 'dark' : 'basic');
+      const targetSec: SavedSectionKey =
+        state.activeSavedSection ||
+        (state.reharmSet === 'dark' ? 'dark' : inferProgressionCategory(formatted));
       if (!state.savedSections[targetSec].includes(formatted)) {
         state.savedSections[targetSec].unshift(formatted);
         persistVault();
@@ -2685,7 +3851,7 @@ const ReharmEngine = {
     applySmartInputShortcuts(input);
   },
 
-  loadSavedProgression(secKey: 'basic' | 'dark', idx: number) {
+  loadSavedProgression(secKey: SavedSectionKey, idx: number) {
     if (Date.now() < justSwipedUntil) return;
     const sectionList = state.savedSections[secKey];
     if (!sectionList) return;
@@ -2695,6 +3861,8 @@ const ReharmEngine = {
     state.baseProgression = prog;
     state.userChangedBaseProgression = true;
     state.manualMeterOverride = false;
+    state.targetMeasureIdx = null;
+    state.lockedMeasures = [];
     state.selectedStrategy = 'strategy1';
     state.reharmActive = false;
     state.selectedTechnique = 'default';
@@ -2704,7 +3872,7 @@ const ReharmEngine = {
     this.switchScreen('generator');
   },
 
-  moveSavedProgression(secKey: 'basic' | 'dark', idx: number, direction: -1 | 1) {
+  moveSavedProgression(secKey: SavedSectionKey, idx: number, direction: -1 | 1) {
     if (Date.now() < justSwipedUntil) return;
     const list = state.savedSections[secKey];
     if (!list) return;
@@ -2718,7 +3886,7 @@ const ReharmEngine = {
     renderSavedProgressionsList();
   },
 
-  startEditSavedProgression(secKey: 'basic' | 'dark', idx: number) {
+  startEditSavedProgression(secKey: SavedSectionKey, idx: number) {
     if (Date.now() < justSwipedUntil) return;
     state.editingSavedKey = `${secKey}:${idx}`;
     renderSavedProgressionsList();
@@ -2734,18 +3902,22 @@ const ReharmEngine = {
     }, 10);
   },
 
-  saveEditSavedProgression(secKey: 'basic' | 'dark', idx: number) {
+  saveEditSavedProgression(secKey: SavedSectionKey, idx: number) {
     const input = document.getElementById(`editSavedInput_${secKey}_${idx}`) as HTMLInputElement | null;
     if (input && input.value.trim()) {
       applySmartInputShortcuts(input);
+      const oldProg = state.savedSections[secKey]?.[idx];
       const parsed = parseInputByMeasures(input.value.trim());
       const formatted = parsed.length > 0
         ? formatMeasuresToString(parsed)
         : normalizeProgressionString(input.value.trim());
       if (formatted && state.savedSections[secKey]) {
         state.savedSections[secKey][idx] = formatted;
-        if (secKey === 'basic' && idx < state.baseProgressionsPool.length) {
-          state.baseProgressionsPool[idx] = formatted;
+        if (oldProg) {
+          const poolIdx = state.baseProgressionsPool.indexOf(oldProg);
+          if (poolIdx !== -1) {
+            state.baseProgressionsPool[poolIdx] = formatted;
+          }
         }
         persistVault();
       }
@@ -2760,7 +3932,7 @@ const ReharmEngine = {
     renderSavedProgressionsList();
   },
 
-  deleteSavedProgression(secKey: 'basic' | 'dark', idx: number) {
+  deleteSavedProgression(secKey: SavedSectionKey, idx: number) {
     if (Date.now() < justSwipedUntil) return;
     if (!state.savedSections[secKey]) return;
     state.savedSections[secKey].splice(idx, 1);
@@ -2818,8 +3990,9 @@ const ReharmEngine = {
     const newProg = normalizeProgressionString(input.value.trim()) || input.value.trim();
     const prevDefault = getDefaultBaseProgression();
     state.baseProgressionsPool.unshift(newProg);
-    if (!state.savedSections.basic.includes(newProg)) {
-      state.savedSections.basic.unshift(newProg);
+    const targetSec = inferProgressionCategory(newProg);
+    if (!state.savedSections[targetSec].includes(newProg)) {
+      state.savedSections[targetSec].unshift(newProg);
     }
     if (!state.userChangedBaseProgression || normalizeProgressionString(state.baseProgression) === prevDefault) {
       state.baseProgression = getDefaultBaseProgression();
@@ -2877,6 +4050,8 @@ const ReharmEngine = {
     state.baseProgression = prog;
     state.userChangedBaseProgression = idx !== 0;
     state.manualMeterOverride = false;
+    state.targetMeasureIdx = null;
+    state.lockedMeasures = [];
     state.selectedStrategy = 'strategy1';
     state.reharmActive = false;
     state.selectedTechnique = 'default';
@@ -2914,10 +4089,12 @@ const ReharmEngine = {
         : normalizeProgressionString(input.value.trim());
       if (formatted) {
         state.baseProgressionsPool[idx] = formatted;
-        const basicIdx = state.savedSections.basic.indexOf(oldProg);
-        if (basicIdx !== -1) {
-          state.savedSections.basic[basicIdx] = formatted;
-        }
+        (['basic', 'jazz', 'dark'] as SavedSectionKey[]).forEach(sec => {
+          const secIdx = state.savedSections[sec].indexOf(oldProg);
+          if (secIdx !== -1) {
+            state.savedSections[sec][secIdx] = formatted;
+          }
+        });
         if (idx === 0 || normalizeProgressionString(state.baseProgression) === normalizeProgressionString(oldProg)) {
           state.baseProgression = formatted;
           const mainInput = document.getElementById('singleProgInput') as HTMLInputElement | null;
@@ -2945,6 +4122,8 @@ const ReharmEngine = {
       state.baseProgression = input.value;
       state.userChangedBaseProgression = true;
       state.manualMeterOverride = false;
+      state.targetMeasureIdx = null;
+      state.lockedMeasures = [];
       state.selectedStrategy = 'strategy1';
       state.reharmActive = false;
       state.selectedTechnique = 'default';
@@ -2978,13 +4157,15 @@ const ReharmEngine = {
     ];
 
     const serializeMeasures = (mList: ChordBeatItem[][]) =>
-      mList.map(m => m.map(c => `${c.chord}:${c.beats}`).join(',')).join('|');
+      mList.map(m => m.map(c => `${c.chord}:${c.beats}:${c.isTurnaround ? 1 : 0}`).join(',')).join('|');
 
+    const opts = getReharmOptions();
     const currentDisplayed = state.reharmActive
       ? TargetBackwardEngine.executeReharm(
           parseInputByMeasures(state.baseProgression),
           state.selectedTechnique,
-          state.selectedStrategy
+          state.selectedStrategy,
+          opts
         )
       : baseMeasures;
     const currentSig = serializeMeasures(currentDisplayed);
@@ -2997,7 +4178,8 @@ const ReharmEngine = {
       const out = TargetBackwardEngine.executeReharm(
         freshBase,
         state.selectedTechnique,
-        strat
+        strat,
+        opts
       );
       const sig = serializeMeasures(out);
       if (sig !== currentSig && !uniqueMap.has(sig)) {
