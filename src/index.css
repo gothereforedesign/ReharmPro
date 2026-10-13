@@ -45,9 +45,14 @@
 }
 
 sup {
-  font-size: 0.65em;
-  vertical-align: super;
-  line-height: 0;
+  font-size: 0.68em;
+  vertical-align: baseline;
+  position: relative;
+  top: -0.36em;
+  line-height: 1;
   font-weight: 800;
+  letter-spacing: 0;
+  margin-left: 0.5px;
+  padding-right: 1px;
 }
 

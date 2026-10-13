@@ -182,12 +182,14 @@ export function parseChordForVoicing(chordSymbol: string): ParsedChordIntervals 
     seventhInterval = 9; // 6th
   }
 
-  // 4. Extensions (9th, b9, #9, 13th)
+  // 4. Extensions (9th, b9, #9, 11th, 13th)
   let extensionInterval: number | null = null;
   if (qualLower.includes('b9') || qual.includes('♭9')) {
     extensionInterval = 13; // b9
   } else if (qualLower.includes('#9') || isAlt) {
     extensionInterval = 15; // #9
+  } else if (qualLower.includes('11')) {
+    extensionInterval = 17; // 11th
   } else if (qualLower.includes('9') || qualLower.includes('add9') || qualLower.includes('add2')) {
     extensionInterval = 14; // 9
   } else if (qualLower.includes('13')) {
@@ -407,6 +409,68 @@ export function computeSmartVoicing(
   };
 }
 
+export type ElectricPianoModel = 'rhodes' | 'wurlitzer' | 'dx7' | 'clavinet';
+
+export interface EPModelInfo {
+  id: ElectricPianoModel;
+  name: string;
+  shortName: string;
+  badge: string;
+  description: string;
+  subtitle: string;
+}
+
+export const EP_MODELS: Record<ElectricPianoModel, EPModelInfo> = {
+  rhodes: {
+    id: 'rhodes',
+    name: 'Rhodes Mk I',
+    shortName: 'Rhodes',
+    badge: 'Rhodes',
+    description: 'Warm Suitcase Tines',
+    subtitle: 'Warm tine bell & silky sustain'
+  },
+  wurlitzer: {
+    id: 'wurlitzer',
+    name: 'Wurlitzer 200A',
+    shortName: 'Wurli',
+    badge: 'Wurli',
+    description: 'Punchy Midrange Reed',
+    subtitle: 'Dynamic reed bark & hollow grit'
+  },
+  dx7: {
+    id: 'dx7',
+    name: 'Yamaha DX7',
+    shortName: 'DX7',
+    badge: 'DX7',
+    description: 'Glassy FM Digital Tines',
+    subtitle: 'Crystalline bell & pristine sparkle'
+  },
+  clavinet: {
+    id: 'clavinet',
+    name: 'Clavinet D6',
+    shortName: 'Clav',
+    badge: 'Clav',
+    description: 'Biting Funky Pluck',
+    subtitle: 'Snappy plectrum pluck & tight snap'
+  }
+};
+
+export const EP_MODEL_ORDER: ElectricPianoModel[] = ['rhodes', 'wurlitzer', 'dx7', 'clavinet'];
+
+/**
+ * Analog Tape Soft-Saturation Transfer Curve:
+ * Generates an asymmetrical hyperbolic tangent soft-clipping curve
+ * providing warm tube/tape compression and musical even/odd harmonics.
+ */
+function makeTapeSaturationCurve(samples = 1024, drive = 1.35): Float32Array {
+  const curve = new Float32Array(samples);
+  for (let i = 0; i < samples; i++) {
+    const x = (i * 2) / samples - 1;
+    curve[i] = Math.tanh(x * drive) * 0.94 + 0.06 * Math.tanh(x * x * Math.sign(x));
+  }
+  return curve;
+}
+
 export class ChordAudioEngine {
   private ctx: AudioContext | null = null;
   private masterInput: GainNode | null = null;
@@ -414,6 +478,9 @@ export class ChordAudioEngine {
   private activeVoices: ActiveVoiceNodes[] = [];
   private lastUpperVoices: number[] | null = null;
   private lastBassMidi: number | null = null;
+
+  // Active Electric Piano Voice Model
+  private currentModel: ElectricPianoModel = 'rhodes';
 
   // Transport state
   private isPlaying = false;
@@ -444,97 +511,176 @@ export class ChordAudioEngine {
     return this.ctx;
   }
 
+  public prefetch() {
+    try {
+      this.ensureContext();
+    } catch {}
+  }
+
+  public getModel(): ElectricPianoModel {
+    return this.currentModel;
+  }
+
+  public setModel(model: ElectricPianoModel) {
+    if (EP_MODELS[model]) {
+      this.currentModel = model;
+    }
+  }
+
+  public cycleModel(): ElectricPianoModel {
+    const idx = EP_MODEL_ORDER.indexOf(this.currentModel);
+    const nextIdx = (idx + 1) % EP_MODEL_ORDER.length;
+    this.currentModel = EP_MODEL_ORDER[nextIdx];
+    return this.currentModel;
+  }
+
+  public getModelInfo(model: ElectricPianoModel = this.currentModel): EPModelInfo {
+    return EP_MODELS[model] || EP_MODELS.rhodes;
+  }
+
   /**
-   * Builds the studio signal processing chain:
-   * Input -> Highpass (55Hz sub-cut) -> Low-Shelf (140Hz mud-cut) -> Soundboard Warmth (580Hz)
-   * -> Master Gentle Lowpass (2550Hz to tame upper pitches) -> Dry/Wet Room Reverb -> Compressor -> Destination
+   * Vintage Warm Master Signal Chain:
+   * Input
+   *   -> Sub Highpass (38Hz)
+   *   -> Analog Console Tone EQ (Warm low-shelf + Air cushion roll-off)
+   *   -> Deep Lush Stereo Chorus / Ensemble (Dual modulated BBD lines with LFOs)
+   *   -> Studio Scoring Stage Room Reverb (Wooden reflection acoustic space)
+   *   -> Master Limiter / Dynamics Compressor -> Destination
    */
   private buildMasterSignalChain(ctx: AudioContext) {
     this.masterInput = ctx.createGain();
-    this.masterInput.gain.setValueAtTime(0.9, ctx.currentTime);
+    this.masterInput.gain.setValueAtTime(0.78, ctx.currentTime);
 
-    // 1. Sub-bass safety highpass filter (removes < 55 Hz rumble and DC bias)
+    // 1. Sub-bass safety filter (removes < 38 Hz rumble)
     const subHighpass = ctx.createBiquadFilter();
     subHighpass.type = 'highpass';
-    subHighpass.frequency.setValueAtTime(55, ctx.currentTime);
+    subHighpass.frequency.setValueAtTime(38, ctx.currentTime);
     subHighpass.Q.setValueAtTime(0.707, ctx.currentTime);
 
-    // 2. Low-shelf filter to trim 100-150 Hz low-end mud
-    const mudLowShelf = ctx.createBiquadFilter();
-    mudLowShelf.type = 'lowshelf';
-    mudLowShelf.frequency.setValueAtTime(140, ctx.currentTime);
-    mudLowShelf.gain.setValueAtTime(-3.6, ctx.currentTime);
+    // 2. Analog Console Warm Tone Shaping (removes harsh digital top-end, adds low-mid warmth)
+    const consoleLowWarmth = ctx.createBiquadFilter();
+    consoleLowWarmth.type = 'lowshelf';
+    consoleLowWarmth.frequency.setValueAtTime(180, ctx.currentTime);
+    consoleLowWarmth.gain.setValueAtTime(1.4, ctx.currentTime);
 
-    // 3. Acoustic Piano Soundboard Body Warmth (580 Hz gentle resonance)
-    const bodyWarmthFilter = ctx.createBiquadFilter();
-    bodyWarmthFilter.type = 'peaking';
-    bodyWarmthFilter.frequency.setValueAtTime(580, ctx.currentTime);
-    bodyWarmthFilter.Q.setValueAtTime(0.75, ctx.currentTime);
-    bodyWarmthFilter.gain.setValueAtTime(0.85, ctx.currentTime);
+    const consoleAirCushion = ctx.createBiquadFilter();
+    consoleAirCushion.type = 'highshelf';
+    consoleAirCushion.frequency.setValueAtTime(5200, ctx.currentTime);
+    consoleAirCushion.gain.setValueAtTime(-3.2, ctx.currentTime);
 
-    // 4. Master Gentle Low-Pass Filter to keep higher pitches warm & never piercing
-    const masterLowpass = ctx.createBiquadFilter();
-    masterLowpass.type = 'lowpass';
-    masterLowpass.frequency.setValueAtTime(2550, ctx.currentTime);
-    masterLowpass.Q.setValueAtTime(0.62, ctx.currentTime);
+    // 3. Deep Lush Stereo Chorus / Ensemble Stage (Silky, rich, dimensional)
+    const chorusDryGain = ctx.createGain();
+    chorusDryGain.gain.setValueAtTime(0.80, ctx.currentTime);
 
-    // 5. Master Dynamics Compressor / Limiter for uniform level across chords
-    this.masterCompressor = ctx.createDynamicsCompressor();
-    this.masterCompressor.threshold.setValueAtTime(-16, ctx.currentTime);
-    this.masterCompressor.knee.setValueAtTime(10, ctx.currentTime);
-    this.masterCompressor.ratio.setValueAtTime(3.8, ctx.currentTime);
-    this.masterCompressor.attack.setValueAtTime(0.004, ctx.currentTime);
-    this.masterCompressor.release.setValueAtTime(0.22, ctx.currentTime);
+    const chorusWetGain = ctx.createGain();
+    chorusWetGain.gain.setValueAtTime(0.30, ctx.currentTime);
 
-    // 6. Algorithmic / Convolution Stereo Room Reverb
-    const dryGain = ctx.createGain();
-    dryGain.gain.setValueAtTime(0.85, ctx.currentTime);
+    const chorusCombiner = ctx.createGain();
+    chorusCombiner.gain.setValueAtTime(1.0, ctx.currentTime);
 
-    const wetGain = ctx.createGain();
-    wetGain.gain.setValueAtTime(0.22, ctx.currentTime);
+    // Modulated BBD delay line Left (14ms baseline, 0.38Hz smooth sine LFO)
+    const delayL = ctx.createDelay();
+    delayL.delayTime.setValueAtTime(0.014, ctx.currentTime);
+    const lfoL = ctx.createOscillator();
+    lfoL.type = 'sine';
+    lfoL.frequency.setValueAtTime(0.38, ctx.currentTime);
+    const lfoGainL = ctx.createGain();
+    lfoGainL.gain.setValueAtTime(0.0016, ctx.currentTime);
+    lfoL.connect(lfoGainL);
+    lfoGainL.connect(delayL.delayTime);
+    lfoL.start(ctx.currentTime);
+
+    // Modulated BBD delay line Right (19ms baseline, 0.48Hz triangle LFO)
+    const delayR = ctx.createDelay();
+    delayR.delayTime.setValueAtTime(0.019, ctx.currentTime);
+    const lfoR = ctx.createOscillator();
+    lfoR.type = 'triangle';
+    lfoR.frequency.setValueAtTime(0.48, ctx.currentTime);
+    const lfoGainR = ctx.createGain();
+    lfoGainR.gain.setValueAtTime(0.0020, ctx.currentTime);
+    lfoR.connect(lfoGainR);
+    lfoGainR.connect(delayR.delayTime);
+    lfoR.start(ctx.currentTime);
+
+    if (typeof ctx.createStereoPanner === 'function') {
+      const panL = ctx.createStereoPanner();
+      panL.pan.setValueAtTime(-0.75, ctx.currentTime);
+      delayL.connect(panL);
+      panL.connect(chorusWetGain);
+
+      const panR = ctx.createStereoPanner();
+      panR.pan.setValueAtTime(0.75, ctx.currentTime);
+      delayR.connect(panR);
+      panR.connect(chorusWetGain);
+    } else {
+      delayL.connect(chorusWetGain);
+      delayR.connect(chorusWetGain);
+    }
+
+    // Connect console tone shaping into chorus paths
+    this.masterInput.connect(subHighpass);
+    subHighpass.connect(consoleLowWarmth);
+    consoleLowWarmth.connect(consoleAirCushion);
+
+    consoleAirCushion.connect(chorusDryGain);
+    consoleAirCushion.connect(delayL);
+    consoleAirCushion.connect(delayR);
+
+    chorusDryGain.connect(chorusCombiner);
+    chorusWetGain.connect(chorusCombiner);
+
+    // 4. Scoring Stage Reverb
+    const reverbDryGain = ctx.createGain();
+    reverbDryGain.gain.setValueAtTime(0.82, ctx.currentTime);
+
+    const reverbWetGain = ctx.createGain();
+    reverbWetGain.gain.setValueAtTime(0.22, ctx.currentTime);
 
     const convolver = ctx.createConvolver();
-    convolver.buffer = this.createRoomImpulseBuffer(ctx, 2.1, 3.0);
+    convolver.buffer = this.createScoringStageImpulse(ctx, 1.85, 2.6);
 
-    // Connect graph
-    this.masterInput.connect(subHighpass);
-    subHighpass.connect(mudLowShelf);
-    mudLowShelf.connect(bodyWarmthFilter);
-    bodyWarmthFilter.connect(masterLowpass);
+    chorusCombiner.connect(reverbDryGain);
+    chorusCombiner.connect(convolver);
+    convolver.connect(reverbWetGain);
 
-    masterLowpass.connect(dryGain);
-    dryGain.connect(this.masterCompressor);
+    // 5. Master Studio Limiter / Dynamics Compressor (Gentle, musical leveling)
+    this.masterCompressor = ctx.createDynamicsCompressor();
+    this.masterCompressor.threshold.setValueAtTime(-18, ctx.currentTime);
+    this.masterCompressor.knee.setValueAtTime(12, ctx.currentTime);
+    this.masterCompressor.ratio.setValueAtTime(2.4, ctx.currentTime);
+    this.masterCompressor.attack.setValueAtTime(0.020, ctx.currentTime);
+    this.masterCompressor.release.setValueAtTime(0.28, ctx.currentTime);
 
-    masterLowpass.connect(convolver);
-    convolver.connect(wetGain);
-    wetGain.connect(this.masterCompressor);
-
+    reverbDryGain.connect(this.masterCompressor);
+    reverbWetGain.connect(this.masterCompressor);
     this.masterCompressor.connect(ctx.destination);
   }
 
   /**
-   * Generates a natural stereo studio-room impulse response with pre-delay and high-frequency damping.
+   * Generates a stereo Studio Scoring Stage impulse response:
+   * - 16ms pre-delay (keeping electric piano in the intimate nearfield)
+   * - Warm wooden room reflections (smooth 1.85s decay, air absorption low-pass damping)
    */
-  private createRoomImpulseBuffer(ctx: AudioContext, durationSec: number, decayRate: number): AudioBuffer {
+  private createScoringStageImpulse(ctx: AudioContext, durationSec = 1.85, decayRate = 2.6): AudioBuffer {
     const sampleRate = ctx.sampleRate;
     const length = Math.floor(sampleRate * durationSec);
     const impulse = ctx.createBuffer(2, length, sampleRate);
-    const preDelaySamples = Math.floor(sampleRate * 0.014); // 14ms studio pre-delay
+    const preDelaySamples = Math.floor(sampleRate * 0.016);
 
     for (let ch = 0; ch < 2; ch++) {
       const data = impulse.getChannelData(ch);
       let lpState = 0;
+      const stereoOffset = ch === 0 ? 0 : Math.floor(sampleRate * 0.0016);
       for (let i = 0; i < length; i++) {
-        if (i < preDelaySamples) {
+        if (i < preDelaySamples + stereoOffset) {
           data[i] = 0;
           continue;
         }
-        const t = (i - preDelaySamples) / (length - preDelaySamples);
+        const t = (i - (preDelaySamples + stereoOffset)) / (length - preDelaySamples);
         const env = Math.pow(1 - t, decayRate);
-        const white = Math.random() * 2 - 1;
-        // Progressive high-frequency air absorption damping
-        const damping = 0.35 + 0.5 * (1 - t);
-        lpState = lpState + damping * (white - lpState);
+        const noise = Math.random() * 2 - 1;
+        const damping = 0.32 + 0.48 * (1 - t);
+        lpState = lpState + damping * (noise - lpState);
         data[i] = lpState * env * 0.65;
       }
     }
@@ -542,26 +688,29 @@ export class ChordAudioEngine {
   }
 
   /**
-   * Releases any currently sounding notes with a smooth, musical half-damper tail
-   * so chords blend naturally without hard cut-offs or low-end mud.
+   * Releases active notes with a smooth damper felt decay curve (~650ms)
+   * so chords blend naturally and musically like a real sustained electric keyboard.
    */
   private releaseActiveVoicesAt(releaseTime: number) {
     const remaining: ActiveVoiceNodes[] = [];
     for (const v of this.activeVoices) {
       if (v.stopTime > releaseTime + 0.05) {
         v.forceRelease(releaseTime);
+        remaining.push(v);
       }
     }
     this.activeVoices = remaining;
   }
 
   /**
-   * Synthesizes a single polyphonic voice with:
-   * - Piano-like individual voice distinction (tight unison tuning, subtle keyboard stereo spread,
-   *   and delicate felt-hammer 2nd-harmonic articulation)
-   * - Pitch-scaled gain and progressive per-voice low-pass filtering so higher pitches stay warm
-   *   and never cut through harshly
-   * - Musical 2-stage natural decay (unified for quarter/half notes, extended for whole-measure chords)
+   * Schedules a single polyphonic electric piano voice:
+   * - Gentle cushioned attack (16ms-22ms ramp, never harsh click spikes)
+   * - Long singing natural exponential decay (notes ring out for bars, never chopped off)
+   * - Smooth, pleasant, velvety acoustic voicing tailored per model:
+   *   1. Rhodes Mk I: Warm fundamental + 2nd harmonic tonebar + 250Hz wooden body + warm 1700Hz lowpass
+   *   2. Wurlitzer 200A: Warm reed core + 650Hz vintage soul warmth + 1900Hz lowpass
+   *   3. Yamaha DX7: Smooth ballad FM tines with gentle glassy shimmer + 2600Hz lowpass (zero harshness)
+   *   4. Clavinet D6: Warm filtered funk keys with smooth dynamic envelope sweep (zero ear-piercing buzz)
    */
   private scheduleSingleVoice(
     midi: number,
@@ -576,155 +725,293 @@ export class ChordAudioEngine {
     if (!this.masterInput) return;
 
     const freq = midiToFreq(midi);
-    const attackSec = isBass ? 0.013 : 0.014;
+    const model = this.currentModel;
 
-    // Musical decay profiling:
-    // - Quarter & Half notes share the exact same natural, unhurried decay curve (~2.6s audible ring)
-    // - Whole-measure chords sustain with a fuller harmonic bloom and longer decay (~4.2s+ audible ring)
-    const bloomWindow = isWholeMeasure ? 0.50 : 0.34;
-    const bloomTargetLevel = isWholeMeasure ? 0.70 : 0.60;
-    const bloomTau = isWholeMeasure ? 0.30 : 0.22;
+    // Model-specific gentle attack and long, singing exponential decay
+    let attackSec = 0.022;
+    let decayTau = 2.4;
+    let damperTau = 0.65;
 
-    const wholeBarSustainSec = isWholeMeasure
-      ? Math.max(1.85, measureDurationSec * 0.82)
-      : 0;
-    const singingDecayTau = isWholeMeasure
-      ? (isBass ? 0.78 : 0.72)
-      : (isBass ? 0.60 : 0.55);
+    if (model === 'rhodes') {
+      attackSec = 0.022;
+      decayTau = isWholeMeasure
+        ? (isBass ? 2.8 : 2.5)
+        : (isBass ? 2.0 : 1.7);
+      damperTau = 0.70;
+    } else if (model === 'wurlitzer') {
+      attackSec = 0.018;
+      decayTau = isWholeMeasure
+        ? (isBass ? 2.4 : 2.2)
+        : (isBass ? 1.8 : 1.5);
+      damperTau = 0.65;
+    } else if (model === 'dx7') {
+      attackSec = 0.016;
+      decayTau = isWholeMeasure
+        ? (isBass ? 3.0 : 2.7)
+        : (isBass ? 2.2 : 1.9);
+      damperTau = 0.75;
+    } else if (model === 'clavinet') {
+      attackSec = 0.012;
+      decayTau = isWholeMeasure
+        ? (isBass ? 1.6 : 1.4)
+        : (isBass ? 1.2 : 1.0);
+      damperTau = 0.50;
+    }
 
-    const naturalRingDuration = isWholeMeasure
-      ? attackSec + wholeBarSustainSec + singingDecayTau * 5.2
-      : attackSec + bloomWindow + singingDecayTau * 5.2;
+    const naturalRingDuration = attackSec + decayTau * 4.0;
+    const stopTime = startTime + naturalRingDuration + 0.6;
 
-    const stopTime = startTime + naturalRingDuration + 0.15;
+    // Smooth Voice Envelope: gentle ramp to baseLevel, then natural exponential decay
+    const baseLevel = (isBass ? 0.28 : 0.24) * velocity * normalizationFactor;
 
-    // 1. Primary Fundamental Oscillator (Triangle for bass warmth, pure Sine for clear upper voice fundamental)
-    const oscFundamental = ctx.createOscillator();
-    oscFundamental.type = isBass ? 'triangle' : 'sine';
-    oscFundamental.frequency.setValueAtTime(freq, startTime);
-
-    // 2. Piano Unison String Oscillator (tight ±1.8 cent tuning instead of wide synth chorus so voices stay distinct)
-    const oscWarmHarmonic = ctx.createOscillator();
-    oscWarmHarmonic.type = 'triangle';
-    oscWarmHarmonic.frequency.setValueAtTime(freq, startTime);
-    const unisonDetuneCents = (Math.random() * 2.4 - 1.2) + (isBass ? -1.0 : 1.4);
-    oscWarmHarmonic.detune.setValueAtTime(unisonDetuneCents, startTime);
-    oscFundamental.detune.setValueAtTime(-unisonDetuneCents * 0.35, startTime);
-
-    // 3. Acoustic Piano 2nd-Harmonic Overtone (gives clear piano-key distinction during initial bloom without harshness)
-    const oscTransient = ctx.createOscillator();
-    oscTransient.type = 'sine';
-    oscTransient.frequency.setValueAtTime(freq * 2, startTime);
-
-    // 4. Ultra-subtle organic pitch stability (0.8 cents slow drift)
-    const lfo = ctx.createOscillator();
-    const lfoGain = ctx.createGain();
-    lfo.type = 'sine';
-    lfo.frequency.setValueAtTime(0.35 + Math.random() * 0.25, startTime);
-    lfoGain.gain.setValueAtTime(0.8, startTime);
-    lfo.connect(lfoGain);
-    lfoGain.connect(oscWarmHarmonic.detune);
-
-    // Pitch-dependent level scaling (Fletcher-Munson compensation so higher notes never poke out)
-    const highPitchAttenuation =
-      !isBass && midi > 55 ? Math.pow(0.962, midi - 55) : 1.0;
-
-    // Mix gains per oscillator
-    const gainFund = ctx.createGain();
-    const gainHarm = ctx.createGain();
-    const gainTrans = ctx.createGain();
-
-    const baseLevel =
-      (isBass ? 0.42 : 0.29) *
-      highPitchAttenuation *
-      velocity *
-      normalizationFactor;
-    gainFund.gain.setValueAtTime(baseLevel, startTime);
-    // Slightly less triangle upper-harmonic weight on higher MIDI notes for a rounder treble
-    const harmRatio = isBass
-      ? 0.36
-      : Math.max(0.24, 0.42 - Math.max(0, midi - 55) * 0.01);
-    gainHarm.gain.setValueAtTime(baseLevel * harmRatio, startTime);
-
-    // Subtle felt-hammer 2nd harmonic key-strike articulation (decays smoothly over ~140ms)
-    const overtoneLevel = isBass
-      ? 0.14
-      : Math.max(0.07, 0.15 - Math.max(0, midi - 55) * 0.005);
-    gainTrans.gain.setValueAtTime(baseLevel * overtoneLevel, startTime);
-    gainTrans.gain.setTargetAtTime(0.0001, startTime + attackSec, 0.085);
-
-    // Per-voice low-pass filter with progressive roll-off on higher pitches:
-    // Keeps lower/mid voices articulate like individual piano strings while gently rounding higher pitches
-    const voiceFilter = ctx.createBiquadFilter();
-    voiceFilter.type = 'lowpass';
-    voiceFilter.Q.setValueAtTime(0.7, startTime);
-
-    const harmonicMult = Math.max(1.85, 3.15 - Math.max(0, midi - 53) * 0.075);
-    const baseCutoff = isBass
-      ? Math.min(540, freq * 3.8)
-      : Math.min(1550, Math.max(680, freq * harmonicMult));
-    const hammerCutoff = Math.min(
-      isBass ? 980 : 2150,
-      baseCutoff * (1.38 + velocity * 0.18)
-    );
-
-    voiceFilter.frequency.setValueAtTime(hammerCutoff, startTime);
-    // Quick 45ms felt-hammer rebound into warm sustain tone
-    voiceFilter.frequency.setTargetAtTime(baseCutoff, startTime + attackSec, 0.045);
-    voiceFilter.frequency.setTargetAtTime(
-      baseCutoff * 0.68,
-      startTime + attackSec + bloomWindow,
-      isWholeMeasure ? 1.4 : 0.9
-    );
-
-    // Click-free Multi-Stage Natural Exponential Decay Envelope (no hard gate cut-off)
     const envGain = ctx.createGain();
     envGain.gain.setValueAtTime(0.0001, startTime);
-    envGain.gain.linearRampToValueAtTime(1.0, startTime + attackSec);
-    // Stage 1: Initial attack bloom settling into singing body
-    envGain.gain.setTargetAtTime(bloomTargetLevel, startTime + attackSec, bloomTau);
+    // Soft, cushioned, gentle attack ramp — NEVER spikes to 1.0!
+    envGain.gain.linearRampToValueAtTime(baseLevel, startTime + attackSec);
+    // Long singing natural exponential decay ringing out smoothly
+    envGain.gain.setTargetAtTime(0.00001, startTime + attackSec, decayTau);
 
-    if (isWholeMeasure) {
-      // Whole-measure chord: gentle singing sustain across the measure, then warm extended release tail
-      const measureSustainTau = Math.max(1.1, measureDurationSec * 0.58);
-      envGain.gain.setTargetAtTime(0.28, startTime + attackSec + bloomWindow, measureSustainTau);
-      envGain.gain.setTargetAtTime(0.00001, startTime + attackSec + wholeBarSustainSec, singingDecayTau);
-    } else {
-      // Quarter note or Half note: unified, pleasant natural decay into silence
-      envGain.gain.setTargetAtTime(0.00001, startTime + attackSec + bloomWindow, singingDecayTau);
+    // Warm Post-Filtering / Tone Shaping (removes all harsh, shrill frequencies)
+    const eqFilter1 = ctx.createBiquadFilter();
+    const eqFilter2 = ctx.createBiquadFilter();
+
+    if (model === 'rhodes') {
+      // Warm Rhodes: low-mid wooden body + warm smooth 1700Hz lowpass
+      eqFilter1.type = 'peaking';
+      eqFilter1.frequency.setValueAtTime(250, startTime);
+      eqFilter1.Q.setValueAtTime(1.0, startTime);
+      eqFilter1.gain.setValueAtTime(1.8, startTime);
+
+      eqFilter2.type = 'lowpass';
+      eqFilter2.frequency.setValueAtTime(1700, startTime);
+      eqFilter2.Q.setValueAtTime(0.60, startTime);
+    } else if (model === 'wurlitzer') {
+      // Warm Wurlitzer: vintage 650Hz soul warmth + warm 1900Hz lowpass
+      eqFilter1.type = 'peaking';
+      eqFilter1.frequency.setValueAtTime(650, startTime);
+      eqFilter1.Q.setValueAtTime(1.0, startTime);
+      eqFilter1.gain.setValueAtTime(1.6, startTime);
+
+      eqFilter2.type = 'lowpass';
+      eqFilter2.frequency.setValueAtTime(1900, startTime);
+      eqFilter2.Q.setValueAtTime(0.65, startTime);
+    } else if (model === 'dx7') {
+      // Smooth DX7: warm presence + 2600Hz lowpass (silky glass without ANY digital edge)
+      eqFilter1.type = 'peaking';
+      eqFilter1.frequency.setValueAtTime(1300, startTime);
+      eqFilter1.Q.setValueAtTime(1.0, startTime);
+      eqFilter1.gain.setValueAtTime(1.2, startTime);
+
+      eqFilter2.type = 'lowpass';
+      eqFilter2.frequency.setValueAtTime(2600, startTime);
+      eqFilter2.Q.setValueAtTime(0.60, startTime);
+    } else if (model === 'clavinet') {
+      // Mellow Funk Clavinet: warm dynamic auto-wah sweep + warm 750Hz body
+      eqFilter1.type = 'peaking';
+      eqFilter1.frequency.setValueAtTime(750, startTime);
+      eqFilter1.Q.setValueAtTime(1.1, startTime);
+      eqFilter1.gain.setValueAtTime(1.5, startTime);
+
+      eqFilter2.type = 'lowpass';
+      eqFilter2.frequency.setValueAtTime(1600, startTime);
+      eqFilter2.frequency.setTargetAtTime(950, startTime + 0.01, 0.14);
+      eqFilter2.Q.setValueAtTime(1.2, startTime);
     }
 
-    oscFundamental.connect(gainFund);
-    oscWarmHarmonic.connect(gainHarm);
-    oscTransient.connect(gainTrans);
+    envGain.connect(eqFilter1);
+    eqFilter1.connect(eqFilter2);
 
-    gainFund.connect(voiceFilter);
-    gainHarm.connect(voiceFilter);
-    gainTrans.connect(voiceFilter);
-
-    voiceFilter.connect(envGain);
-
-    // Subtle acoustic piano stereo perspective (bass slightly left, treble slightly right)
-    // Gives spatial separation and clarity to individual voices within a chord
+    // Stereo Keyboard Panning (Bass left, middle center, treble right)
     if (typeof ctx.createStereoPanner === 'function') {
       const panner = ctx.createStereoPanner();
-      const panPos = Math.max(-0.22, Math.min(0.22, (midi - 55) * 0.011));
+      const panPos = Math.max(-0.25, Math.min(0.25, (midi - 57) * 0.016));
       panner.pan.setValueAtTime(panPos, startTime);
-      envGain.connect(panner);
+      eqFilter2.connect(panner);
       panner.connect(this.masterInput);
     } else {
-      envGain.connect(this.masterInput);
+      eqFilter2.connect(this.masterInput);
     }
 
-    oscFundamental.start(startTime);
-    oscWarmHarmonic.start(startTime);
-    oscTransient.start(startTime);
-    lfo.start(startTime);
+    // Oscillators to start/stop
+    const oscillatorsToStop: AudioNode[] = [];
 
-    oscFundamental.stop(stopTime);
-    oscWarmHarmonic.stop(stopTime);
-    oscTransient.stop(stopTime);
-    lfo.stop(stopTime);
+    if (model === 'rhodes') {
+      // --- SMOOTH VELVETY RHODES MK I ---
+      // Fundamental pure sine core
+      const oscFund = ctx.createOscillator();
+      oscFund.type = 'sine';
+      oscFund.frequency.setValueAtTime(freq, startTime);
+
+      // Warm 2nd harmonic tonebar resonance
+      const oscBody = ctx.createOscillator();
+      oscBody.type = 'sine';
+      oscBody.frequency.setValueAtTime(freq * 2.0, startTime);
+
+      // Gentle, musical 3rd harmonic tine chime (soft, never harsh)
+      const oscTine = ctx.createOscillator();
+      oscTine.type = 'sine';
+      oscTine.frequency.setValueAtTime(freq * 3.0, startTime);
+
+      const gFund = ctx.createGain();
+      const gBody = ctx.createGain();
+      const gTine = ctx.createGain();
+
+      gFund.gain.setValueAtTime(0.82, startTime);
+      gBody.gain.setValueAtTime(0.16, startTime);
+
+      // Soft tine chime that gently recedes
+      gTine.gain.setValueAtTime(0.06 * velocity, startTime);
+      gTine.gain.setTargetAtTime(0.0001, startTime + attackSec, 0.12);
+
+      oscFund.connect(gFund);
+      oscBody.connect(gBody);
+      oscTine.connect(gTine);
+
+      gFund.connect(envGain);
+      gBody.connect(envGain);
+      gTine.connect(envGain);
+
+      [oscFund, oscBody, oscTine].forEach(osc => {
+        osc.start(startTime);
+        osc.stop(stopTime);
+        oscillatorsToStop.push(osc);
+      });
+    } else if (model === 'wurlitzer') {
+      // --- WARM VINTAGE WURLITZER 200A ---
+      // Warm triangle reed fundamental
+      const oscReed = ctx.createOscillator();
+      oscReed.type = 'triangle';
+      oscReed.frequency.setValueAtTime(freq, startTime);
+
+      // Warm 2nd harmonic reed body
+      const oscPart2 = ctx.createOscillator();
+      oscPart2.type = 'sine';
+      oscPart2.frequency.setValueAtTime(freq * 2.0, startTime);
+
+      // Subtle 3rd harmonic hollow reed tone
+      const oscPart3 = ctx.createOscillator();
+      oscPart3.type = 'sine';
+      oscPart3.frequency.setValueAtTime(freq * 3.0, startTime);
+
+      const gReed = ctx.createGain();
+      const gPart2 = ctx.createGain();
+      const gPart3 = ctx.createGain();
+
+      gReed.gain.setValueAtTime(0.80, startTime);
+      gPart2.gain.setValueAtTime(0.18, startTime);
+      gPart3.gain.setValueAtTime(0.08, startTime);
+
+      oscReed.connect(gReed);
+      oscPart2.connect(gPart2);
+      oscPart3.connect(gPart3);
+
+      gReed.connect(envGain);
+      gPart2.connect(envGain);
+      gPart3.connect(envGain);
+
+      [oscReed, oscPart2, oscPart3].forEach(osc => {
+        osc.start(startTime);
+        osc.stop(stopTime);
+        oscillatorsToStop.push(osc);
+      });
+    } else if (model === 'dx7') {
+      // --- SILKY 80S BALLAD YAMAHA DX7 ---
+      // Soft carrier sine
+      const carrier1 = ctx.createOscillator();
+      carrier1.type = 'sine';
+      carrier1.frequency.setValueAtTime(freq, startTime);
+
+      // Gentle glassy modulator (very subtle modulation index - velvety, never harsh)
+      const modulator = ctx.createOscillator();
+      modulator.type = 'sine';
+      modulator.frequency.setValueAtTime(freq * 1.0, startTime);
+
+      const modGain = ctx.createGain();
+      modGain.gain.setValueAtTime(freq * 0.26 * velocity, startTime);
+      modGain.gain.setTargetAtTime(freq * 0.03, startTime + 0.01, 0.14);
+
+      modulator.connect(modGain);
+      modGain.connect(carrier1.frequency);
+
+      // Second carrier: subtle warm chorus detune (+1 cent)
+      const carrier2 = ctx.createOscillator();
+      carrier2.type = 'sine';
+      carrier2.frequency.setValueAtTime(freq * 1.0006, startTime);
+
+      // Soft crystalline bell harmonic
+      const oscBell = ctx.createOscillator();
+      oscBell.type = 'sine';
+      oscBell.frequency.setValueAtTime(freq * 2.0, startTime);
+
+      const gCar1 = ctx.createGain();
+      const gCar2 = ctx.createGain();
+      const gBell = ctx.createGain();
+
+      gCar1.gain.setValueAtTime(0.72, startTime);
+      gCar2.gain.setValueAtTime(0.22, startTime);
+      gBell.gain.setValueAtTime(0.12, startTime);
+
+      carrier1.connect(gCar1);
+      carrier2.connect(gCar2);
+      oscBell.connect(gBell);
+
+      gCar1.connect(envGain);
+      gCar2.connect(envGain);
+      gBell.connect(envGain);
+
+      [carrier1, modulator, carrier2, oscBell].forEach(osc => {
+        osc.start(startTime);
+        osc.stop(stopTime);
+        oscillatorsToStop.push(osc);
+      });
+    } else if (model === 'clavinet') {
+      // --- WARM FUNKY CLAVINET D6 ---
+      // Filtered triangle string core (smooth, rounded)
+      const oscString = ctx.createOscillator();
+      oscString.type = 'triangle';
+      oscString.frequency.setValueAtTime(freq, startTime);
+
+      // Upper octave warmth
+      const oscUpper = ctx.createOscillator();
+      oscUpper.type = 'sine';
+      oscUpper.frequency.setValueAtTime(freq * 2.0, startTime);
+
+      // Gentle pluck tick (soft, musical)
+      const oscPluck = ctx.createOscillator();
+      oscPluck.type = 'sine';
+      oscPluck.frequency.setValueAtTime(freq * 3.5, startTime);
+
+      const gString = ctx.createGain();
+      const gUpper = ctx.createGain();
+      const gPluck = ctx.createGain();
+
+      gString.gain.setValueAtTime(0.72, startTime);
+      gUpper.gain.setValueAtTime(0.22, startTime);
+      gPluck.gain.setValueAtTime(0.06 * velocity, startTime);
+      gPluck.gain.setTargetAtTime(0.0001, startTime + attackSec, 0.014);
+
+      oscString.connect(gString);
+      oscUpper.connect(gUpper);
+      oscPluck.connect(gPluck);
+
+      gString.connect(envGain);
+      gUpper.connect(envGain);
+      gPluck.connect(envGain);
+
+      [oscString, oscUpper, oscPluck].forEach(osc => {
+        osc.start(startTime);
+        osc.stop(stopTime);
+        oscillatorsToStop.push(osc);
+      });
+    }
+
+    const stopVoiceFn = (stopT: number) => {
+      oscillatorsToStop.forEach(osc => {
+        try {
+          (osc as OscillatorNode).stop(stopT);
+        } catch {}
+      });
+    };
 
     let released = false;
     const voiceRecord: ActiveVoiceNodes = {
@@ -734,15 +1021,10 @@ export class ChordAudioEngine {
         released = true;
         try {
           const t = Math.max(now, ctx.currentTime);
-          // Smooth damper release using setTargetAtTime (seamless transition from current scheduled curve without jump)
-          const damperTau = isBass ? 0.16 : 0.30;
-          envGain.gain.setTargetAtTime(0.00001, t + 0.01, damperTau);
-          const earlyStop = t + damperTau * 4.8 + 0.08;
+          envGain.gain.setTargetAtTime(0.00001, t, damperTau);
+          const earlyStop = t + damperTau * 4.0;
           if (earlyStop < stopTime) {
-            oscFundamental.stop(earlyStop);
-            oscWarmHarmonic.stop(earlyStop);
-            oscTransient.stop(earlyStop);
-            lfo.stop(earlyStop);
+            stopVoiceFn(earlyStop);
           }
         } catch {}
       }
@@ -753,6 +1035,7 @@ export class ChordAudioEngine {
 
   /**
    * Schedules a complete humanized, voice-led chord at `startTime` (AudioContext time).
+   * Playback is cushioned and velvety with smooth chord transitions.
    */
   public scheduleChordAtTime(
     chordSymbol: string,
@@ -765,7 +1048,7 @@ export class ChordAudioEngine {
     this.lastUpperVoices = voicing.upperMidis;
     this.lastBassMidi = voicing.bassMidi;
 
-    // Gently half-pedal / release prior chord voices as the new chord enters
+    // Gently half-pedal / fade prior chord voices smoothly as the new chord enters
     this.releaseActiveVoicesAt(startTime);
 
     const secPerBeat = 60 / this.bpm;
@@ -790,19 +1073,19 @@ export class ChordAudioEngine {
             ...[...voicing.upperMidis].reverse().map(m => ({ midi: m, isBass: false }))
           ];
 
-    // Staggered strumming micro-delay (15ms - 19ms between consecutive strings/voices)
-    const baseStaggerSec = strumDirection === 'down' ? 0.019 : 0.015;
+    // Staggered strumming micro-delay (16ms - 20ms between consecutive voices)
+    const baseStaggerSec = strumDirection === 'down' ? 0.020 : 0.016;
 
     orderedVoices.forEach((voice, idx) => {
-      const jitterSec = (Math.random() - 0.5) * 0.004; // ±2ms human micro-timing variance
+      const jitterSec = (Math.random() - 0.5) * 0.003; // ±1.5ms human micro-timing variance
       const noteOffset = Math.max(0, idx * baseStaggerSec + jitterSec);
       const noteStart = startTime + noteOffset;
 
-      // Velocity humanization (±8% random variance + slight top-note & bass contour)
+      // Soft, expressive velocity contour: warm, gentle, never harsh or hammered
       const isTopVoice = idx === orderedVoices.length - 1;
-      const contour = voice.isBass ? 1.05 : isTopVoice ? 1.03 : 0.94;
-      const humanVelocityVariance = 0.92 + Math.random() * 0.16;
-      const velocity = Math.min(1.15, contour * humanVelocityVariance * accentMultiplier);
+      const contour = voice.isBass ? 1.02 : isTopVoice ? 1.02 : 0.96;
+      const humanVelocityVariance = 0.80 + Math.random() * 0.12;
+      const velocity = Math.min(0.88, contour * humanVelocityVariance * (accentMultiplier * 0.86));
 
       this.scheduleSingleVoice(
         voice.midi,
@@ -938,10 +1221,10 @@ export class ChordAudioEngine {
       const stepDurationSec = step.beats * secPerBeat;
       const playTime = this.nextStepTime;
 
-      // Downstroke on beat 0 of a measure (fuller attack), subtle upstroke on inner-measure changes
+      // Downstroke on beat 0 of a measure (warm natural attack), gentle touch on inner-measure changes
       const isDownbeat = step.beatInMeasure === 0;
       const strumDir: 'down' | 'up' = isDownbeat ? 'down' : 'up';
-      const accent = isDownbeat ? 1.04 : 0.93;
+      const accent = isDownbeat ? 1.00 : 0.92;
 
       this.scheduleChordAtTime(
         step.chord,
