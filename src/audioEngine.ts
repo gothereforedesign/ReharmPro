@@ -8,6 +8,8 @@
 //   procedural room convolution reverb, dynamic range compression, and voice-count gain normalization)
 // ============================================================================
 
+import { SoundFont2 } from 'soundfont2-esm';
+
 export interface ScheduledChordMeasureItem {
   chord: string;
   beats: number;
@@ -426,32 +428,32 @@ export const EP_MODELS: Record<ElectricPianoModel, EPModelInfo> = {
     name: 'Rhodes Mk I',
     shortName: 'Rhodes',
     badge: 'Rhodes',
-    description: 'Warm Suitcase Tines',
-    subtitle: 'Warm tine bell & silky sustain'
+    description: 'Velvety Tines & Tonebar',
+    subtitle: 'Warm tine bloom & smooth singing decay'
   },
   wurlitzer: {
     id: 'wurlitzer',
     name: 'Wurlitzer 200A',
     shortName: 'Wurli',
     badge: 'Wurli',
-    description: 'Punchy Midrange Reed',
-    subtitle: 'Dynamic reed bark & hollow grit'
+    description: 'Smooth Vintage Reed',
+    subtitle: 'Warm soul reed & mellow singing decay'
   },
   dx7: {
     id: 'dx7',
     name: 'Yamaha DX7',
     shortName: 'DX7',
     badge: 'DX7',
-    description: 'Glassy FM Digital Tines',
-    subtitle: 'Crystalline bell & pristine sparkle'
+    description: 'Silky Ballad Crystal FM',
+    subtitle: 'Smooth crystalline chime & warm bloom'
   },
   clavinet: {
     id: 'clavinet',
     name: 'Clavinet D6',
     shortName: 'Clav',
     badge: 'Clav',
-    description: 'Biting Funky Pluck',
-    subtitle: 'Snappy plectrum pluck & tight snap'
+    description: 'Mellow Funky Keys',
+    subtitle: 'Smooth filtered pluck & punchy decay'
   }
 };
 
@@ -482,10 +484,205 @@ export class ChordAudioEngine {
   // Active Electric Piano Voice Model
   private currentModel: ElectricPianoModel = 'rhodes';
 
+  // Custom User Audio Uploads (VST / Instruments & Drum Loop)
+  private customInstrumentBuffer: AudioBuffer | null = null;
+  private soundFont: SoundFont2 | null = null;
+  private customDrumLoopBuffer: AudioBuffer | null = null;
+  private customDrumLoopBaseBpm = 120;
+
+  private soundFontName: string | null = null;
+  private customInstrumentName: string | null = null;
+  private customDrumLoopName: string | null = null;
+
+  private keysLowEq: BiquadFilterNode | null = null;
+  private keysHighEq: BiquadFilterNode | null = null;
+  private keysGainNode: GainNode | null = null;
+  private isKeysActive = true;
+
+  private drumsLowEq: BiquadFilterNode | null = null;
+  private drumsHighEq: BiquadFilterNode | null = null;
+  private drumsGainNode: GainNode | null = null;
+  private isDrumsActive = true;
+
+  public setKeysActive(active: boolean) {
+    this.isKeysActive = active;
+    if (this.ctx && this.keysGainNode) {
+      const target = this.isKeysActive ? 1.0 : 0;
+      this.keysGainNode.gain.cancelScheduledValues(this.ctx.currentTime);
+      this.keysGainNode.gain.setTargetAtTime(target, this.ctx.currentTime, 0.02);
+    }
+  }
+
+  public toggleKeysActive(): boolean {
+    this.isKeysActive = !this.isKeysActive;
+    this.setKeysActive(this.isKeysActive);
+    return this.isKeysActive;
+  }
+
+  public getKeysActive(): boolean {
+    return this.isKeysActive;
+  }
+
+  public setDrumsActive(active: boolean) {
+    this.isDrumsActive = active;
+    if (this.ctx && this.drumsGainNode) {
+      const target = this.isDrumsActive ? 1.0 : 0;
+      this.drumsGainNode.gain.cancelScheduledValues(this.ctx.currentTime);
+      this.drumsGainNode.gain.setTargetAtTime(target, this.ctx.currentTime, 0.02);
+    }
+  }
+
+  public toggleDrumsActive(): boolean {
+    this.isDrumsActive = !this.isDrumsActive;
+    this.setDrumsActive(this.isDrumsActive);
+    return this.isDrumsActive;
+  }
+
+  public getDrumsActive(): boolean {
+    return this.isDrumsActive;
+  }
+
+  public setKeysLowEq(db: number) {
+    if (this.ctx && this.keysLowEq) {
+      this.keysLowEq.gain.setValueAtTime(Math.max(-15, Math.min(15, db)), this.ctx.currentTime);
+    }
+  }
+
+  public getKeysLowEq(): number {
+    return this.keysLowEq?.gain.value || 0;
+  }
+
+  public setKeysHighEq(db: number) {
+    if (this.ctx && this.keysHighEq) {
+      this.keysHighEq.gain.setValueAtTime(Math.max(-15, Math.min(15, db)), this.ctx.currentTime);
+    }
+  }
+
+  public getKeysHighEq(): number {
+    return this.keysHighEq?.gain.value || 0;
+  }
+
+  public setKeysGain(gain: number) {
+    if (this.ctx && this.keysGainNode) {
+      const activeMult = this.isKeysActive ? 1.0 : 0;
+      this.keysGainNode.gain.setValueAtTime(Math.max(0, Math.min(2.0, gain)) * activeMult, this.ctx.currentTime);
+    }
+  }
+
+  public getKeysGain(): number {
+    return this.keysGainNode?.gain.value || 1.0;
+  }
+
+  public setDrumsLowEq(db: number) {
+    if (this.ctx && this.drumsLowEq) {
+      this.drumsLowEq.gain.setValueAtTime(Math.max(-15, Math.min(15, db)), this.ctx.currentTime);
+    }
+  }
+
+  public getDrumsLowEq(): number {
+    return this.drumsLowEq?.gain.value || 0;
+  }
+
+  public setDrumsHighEq(db: number) {
+    if (this.ctx && this.drumsHighEq) {
+      this.drumsHighEq.gain.setValueAtTime(Math.max(-15, Math.min(15, db)), this.ctx.currentTime);
+    }
+  }
+
+  public getDrumsHighEq(): number {
+    return this.drumsHighEq?.gain.value || 0;
+  }
+
+  public setDrumsGain(gain: number) {
+    if (this.ctx && this.drumsGainNode) {
+      const activeMult = this.isDrumsActive ? 1.0 : 0;
+      this.drumsGainNode.gain.setValueAtTime(Math.max(0, Math.min(2.0, gain)) * activeMult, this.ctx.currentTime);
+    }
+  }
+
+  public getDrumsGain(): number {
+    return this.drumsGainNode?.gain.value || 1.0;
+  }
+
+  public async loadSoundFont(arrayBuffer: ArrayBuffer, name?: string) {
+    const ctx = this.ensureContext();
+    try {
+      this.soundFont = new SoundFont2(new Uint8Array(arrayBuffer));
+      this.customInstrumentBuffer = null;
+      this.customInstrumentName = null;
+      this.soundFontName = name || 'SoundFont.sf2';
+    } catch (e) {
+      console.error('Failed to parse SF2 SoundFont:', e);
+      throw e;
+    }
+  }
+
+  public clearSoundFont() {
+    this.soundFont = null;
+    this.soundFontName = null;
+  }
+
+  public getHasSoundFont(): boolean {
+    return this.soundFont !== null;
+  }
+
+  public getSoundFontName(): string | null {
+    return this.soundFontName;
+  }
+
+  public async loadCustomInstrumentSample(arrayBuffer: ArrayBuffer, name?: string) {
+    const ctx = this.ensureContext();
+    this.customInstrumentBuffer = await ctx.decodeAudioData(arrayBuffer);
+    this.soundFont = null;
+    this.soundFontName = null;
+    this.customInstrumentName = name || 'Instrument.wav';
+  }
+
+  public clearCustomInstrument() {
+    this.customInstrumentBuffer = null;
+    this.customInstrumentName = null;
+  }
+
+  public getHasCustomInstrument(): boolean {
+    return this.customInstrumentBuffer !== null;
+  }
+
+  public getCustomInstrumentName(): string | null {
+    return this.customInstrumentName;
+  }
+
+  public async loadCustomDrumLoop(arrayBuffer: ArrayBuffer, baseBpm: number, name?: string) {
+    const ctx = this.ensureContext();
+    this.customDrumLoopBuffer = await ctx.decodeAudioData(arrayBuffer);
+    this.customDrumLoopBaseBpm = Math.max(20, baseBpm);
+    this.customDrumLoopName = name || 'DrumLoop.wav';
+  }
+
+  public clearCustomDrumLoop() {
+    this.customDrumLoopBuffer = null;
+    this.customDrumLoopName = null;
+  }
+
+  public getHasCustomDrumLoop(): boolean {
+    return this.customDrumLoopBuffer !== null;
+  }
+
+  public getCustomDrumLoopName(): string | null {
+    return this.customDrumLoopName;
+  }
+
+  public setCustomDrumLoopBaseBpm(bpm: number) {
+    this.customDrumLoopBaseBpm = Math.max(20, bpm);
+  }
+
+  public getCustomDrumLoopBaseBpm(): number {
+    return this.customDrumLoopBaseBpm;
+  }
+
   // Transport state
   private isPlaying = false;
   private isLooping = true;
-  private bpm = 104;
+  private bpm = 80;
   private meter = 4;
   private steps: TransportStep[] = [];
   private currentStepIndex = 0;
@@ -493,6 +690,12 @@ export class ChordAudioEngine {
   private schedulerTimer: ReturnType<typeof setInterval> | null = null;
   private uiTimers: ReturnType<typeof setTimeout>[] = [];
   private strumCounter = 0;
+
+  // Back Beat (Acoustic Jazz Brush Swing Kit)
+  private isBeatActive = true;
+  private beatVolume = 0.52;
+  private drumGain: GainNode | null = null;
+  private noiseBuffer: AudioBuffer | null = null;
 
   private onHighlightCallback: ((measureIdx: number | null, chordIdx: number | null) => void) | null = null;
   private onStateChangeCallback: ((playing: boolean) => void) | null = null;
@@ -551,11 +754,30 @@ export class ChordAudioEngine {
     this.masterInput = ctx.createGain();
     this.masterInput.gain.setValueAtTime(0.78, ctx.currentTime);
 
+    this.keysLowEq = ctx.createBiquadFilter();
+    this.keysLowEq.type = 'lowshelf';
+    this.keysLowEq.frequency.setValueAtTime(200, ctx.currentTime);
+    this.keysLowEq.gain.setValueAtTime(0, ctx.currentTime);
+
+    this.keysHighEq = ctx.createBiquadFilter();
+    this.keysHighEq.type = 'highshelf';
+    this.keysHighEq.frequency.setValueAtTime(5000, ctx.currentTime);
+    this.keysHighEq.gain.setValueAtTime(0, ctx.currentTime);
+
+    this.keysGainNode = ctx.createGain();
+    this.keysGainNode.gain.setValueAtTime(this.isKeysActive ? 1.0 : 0, ctx.currentTime);
+
+    this.masterInput.connect(this.keysLowEq);
+    this.keysLowEq.connect(this.keysHighEq);
+    this.keysHighEq.connect(this.keysGainNode);
+
     // 1. Sub-bass safety filter (removes < 38 Hz rumble)
     const subHighpass = ctx.createBiquadFilter();
     subHighpass.type = 'highpass';
     subHighpass.frequency.setValueAtTime(38, ctx.currentTime);
     subHighpass.Q.setValueAtTime(0.707, ctx.currentTime);
+
+    this.keysGainNode.connect(subHighpass);
 
     // 2. Analog Console Warm Tone Shaping (removes harsh digital top-end, adds low-mid warmth)
     const consoleLowWarmth = ctx.createBiquadFilter();
@@ -653,7 +875,45 @@ export class ChordAudioEngine {
 
     reverbDryGain.connect(this.masterCompressor);
     reverbWetGain.connect(this.masterCompressor);
-    this.masterCompressor.connect(ctx.destination);
+
+    // 6. Acoustic Jazz Backbeat Drum Bus
+    this.drumGain = ctx.createGain();
+    this.drumGain.gain.setValueAtTime(this.isBeatActive ? this.beatVolume : 0, ctx.currentTime);
+
+    this.drumsLowEq = ctx.createBiquadFilter();
+    this.drumsLowEq.type = 'lowshelf';
+    this.drumsLowEq.frequency.setValueAtTime(200, ctx.currentTime);
+    this.drumsLowEq.gain.setValueAtTime(0, ctx.currentTime);
+
+    this.drumsHighEq = ctx.createBiquadFilter();
+    this.drumsHighEq.type = 'highshelf';
+    this.drumsHighEq.frequency.setValueAtTime(5000, ctx.currentTime);
+    this.drumsHighEq.gain.setValueAtTime(0, ctx.currentTime);
+
+    this.drumsGainNode = ctx.createGain();
+    this.drumsGainNode.gain.setValueAtTime(this.isDrumsActive ? 1.0 : 0, ctx.currentTime);
+
+    this.drumGain.connect(this.drumsLowEq);
+    this.drumsLowEq.connect(this.drumsHighEq);
+    this.drumsHighEq.connect(this.drumsGainNode);
+
+    // Drum subtle room reverb send (warm acoustic studio blend)
+    const drumReverbSend = ctx.createGain();
+    drumReverbSend.gain.setValueAtTime(0.14, ctx.currentTime);
+    this.drumsGainNode.connect(drumReverbSend);
+    drumReverbSend.connect(convolver);
+
+    // Direct dry drum send to master compressor
+    const drumDryGain = ctx.createGain();
+    drumDryGain.gain.setValueAtTime(0.86, ctx.currentTime);
+    this.drumsGainNode.connect(drumDryGain);
+    drumDryGain.connect(this.masterCompressor);
+
+    // Master makeup gain boost (+4.3dB / 1.85 multiplier) for high keyboard volume & presence
+    const masterGainBoost = ctx.createGain();
+    masterGainBoost.gain.setValueAtTime(1.85, ctx.currentTime);
+    this.masterCompressor.connect(masterGainBoost);
+    masterGainBoost.connect(ctx.destination);
   }
 
   /**
@@ -724,98 +984,199 @@ export class ChordAudioEngine {
     const ctx = this.ensureContext();
     if (!this.masterInput) return;
 
-    const freq = midiToFreq(midi);
-    const model = this.currentModel;
-
-    // Model-specific gentle attack and long, singing exponential decay
-    let attackSec = 0.022;
-    let decayTau = 2.4;
-    let damperTau = 0.65;
-
-    if (model === 'rhodes') {
-      attackSec = 0.022;
-      decayTau = isWholeMeasure
-        ? (isBass ? 2.8 : 2.5)
-        : (isBass ? 2.0 : 1.7);
-      damperTau = 0.70;
-    } else if (model === 'wurlitzer') {
-      attackSec = 0.018;
-      decayTau = isWholeMeasure
-        ? (isBass ? 2.4 : 2.2)
-        : (isBass ? 1.8 : 1.5);
-      damperTau = 0.65;
-    } else if (model === 'dx7') {
-      attackSec = 0.016;
-      decayTau = isWholeMeasure
-        ? (isBass ? 3.0 : 2.7)
-        : (isBass ? 2.2 : 1.9);
-      damperTau = 0.75;
-    } else if (model === 'clavinet') {
-      attackSec = 0.012;
-      decayTau = isWholeMeasure
-        ? (isBass ? 1.6 : 1.4)
-        : (isBass ? 1.2 : 1.0);
-      damperTau = 0.50;
+    // Cut base keys sound: only use uploaded sounds
+    if (!this.soundFont && !this.customInstrumentBuffer) {
+      return;
     }
 
-    const naturalRingDuration = attackSec + decayTau * 4.0;
+    const freq = midiToFreq(midi);
+
+    // If user uploaded a SoundFont (.sf2), use SF2 sample mapping
+    if (this.soundFont) {
+      try {
+        const keyData = this.soundFont.getKeyData(midi);
+        if (keyData && keyData.sample) {
+          const sampleObj = keyData.sample;
+          const header = sampleObj.header;
+          const pcmData = sampleObj.data;
+          if (pcmData && pcmData.length > 0 && header.sampleRate > 0) {
+            const audioBuf = ctx.createBuffer(1, pcmData.length, header.sampleRate);
+            const channel = audioBuf.getChannelData(0);
+            for (let i = 0; i < pcmData.length; i++) {
+              channel[i] = pcmData[i] / 32768.0;
+            }
+            const source = ctx.createBufferSource();
+            source.buffer = audioBuf;
+
+            const origPitch = header.originalPitch >= 0 && header.originalPitch < 128 ? header.originalPitch : 60;
+            const rate = Math.pow(2, (midi - origPitch) / 12);
+            source.playbackRate.setValueAtTime(Math.max(0.1, Math.min(8.0, rate)), startTime);
+
+            const sampleGain = ctx.createGain();
+            sampleGain.gain.setValueAtTime(0.0001, startTime);
+            sampleGain.gain.linearRampToValueAtTime(velocity * 1.6 * normalizationFactor, startTime + 0.015);
+            sampleGain.gain.setTargetAtTime(0.00001, startTime + Math.max(0.1, measureDurationSec * 0.8), 0.4);
+
+            source.connect(sampleGain);
+            sampleGain.connect(this.masterInput);
+
+            source.start(startTime);
+            const stopT = startTime + measureDurationSec + 0.8;
+            source.stop(stopT);
+
+            let released = false;
+            const voiceRecord: ActiveVoiceNodes = {
+              stopTime: stopT,
+              forceRelease: (now: number) => {
+                if (released) return;
+                released = true;
+                try {
+                  const t = Math.max(now, ctx.currentTime);
+                  sampleGain.gain.setTargetAtTime(0.00001, t, 0.12);
+                } catch {}
+              }
+            };
+            this.activeVoices.push(voiceRecord);
+            return;
+          }
+        }
+      } catch (e) {
+        console.error('Error playing SF2 sample for MIDI note', midi, e);
+      }
+    }
+
+    // If user uploaded a custom instrument sample, play it pitched to note frequency
+    if (this.customInstrumentBuffer) {
+      const source = ctx.createBufferSource();
+      source.buffer = this.customInstrumentBuffer;
+      const baseFreq = 261.63; // C4 reference
+      const rate = freq / baseFreq;
+      source.playbackRate.setValueAtTime(Math.max(0.25, Math.min(4.0, rate)), startTime);
+
+      const sampleGain = ctx.createGain();
+      sampleGain.gain.setValueAtTime(0.0001, startTime);
+      sampleGain.gain.linearRampToValueAtTime(velocity * 1.45 * normalizationFactor, startTime + 0.012);
+      sampleGain.gain.setTargetAtTime(0.00001, startTime + Math.max(0.1, measureDurationSec * 0.8), 0.35);
+
+      source.connect(sampleGain);
+      sampleGain.connect(this.masterInput);
+
+      source.start(startTime);
+      const stopT = startTime + measureDurationSec + 0.6;
+      source.stop(stopT);
+
+      let released = false;
+      const voiceRecord: ActiveVoiceNodes = {
+        stopTime: stopT,
+        forceRelease: (now: number) => {
+          if (released) return;
+          released = true;
+          try {
+            const t = Math.max(now, ctx.currentTime);
+            sampleGain.gain.setTargetAtTime(0.00001, t, 0.12);
+          } catch {}
+        }
+      };
+      this.activeVoices.push(voiceRecord);
+      return;
+    }
+
+    const model = this.currentModel;
+
+    // Model-specific gentle attack, musical initial decay to warm singing sustain, and felt damper
+    let attackSec = 0.026;
+    let initialDecaySec = 0.40;
+    let sustainRatio = 0.36;
+    let longDecayTau = 2.2;
+    let damperTau = 0.24;
+
+    if (model === 'rhodes') {
+      attackSec = 0.026;
+      initialDecaySec = 0.40;
+      sustainRatio = 0.36;
+      longDecayTau = isWholeMeasure ? (isBass ? 2.8 : 2.5) : (isBass ? 2.0 : 1.8);
+      damperTau = 0.24;
+    } else if (model === 'wurlitzer') {
+      attackSec = 0.024;
+      initialDecaySec = 0.34;
+      sustainRatio = 0.34;
+      longDecayTau = isWholeMeasure ? (isBass ? 2.5 : 2.2) : (isBass ? 1.8 : 1.6);
+      damperTau = 0.22;
+    } else if (model === 'dx7') {
+      attackSec = 0.025;
+      initialDecaySec = 0.42;
+      sustainRatio = 0.35;
+      longDecayTau = isWholeMeasure ? (isBass ? 2.8 : 2.5) : (isBass ? 2.0 : 1.8);
+      damperTau = 0.25;
+    } else if (model === 'clavinet') {
+      attackSec = 0.018;
+      initialDecaySec = 0.28;
+      sustainRatio = 0.28;
+      longDecayTau = isWholeMeasure ? (isBass ? 1.8 : 1.5) : (isBass ? 1.4 : 1.1);
+      damperTau = 0.18;
+    }
+
+    const naturalRingDuration = attackSec + initialDecaySec + longDecayTau * 3.5;
     const stopTime = startTime + naturalRingDuration + 0.6;
 
-    // Smooth Voice Envelope: gentle ramp to baseLevel, then natural exponential decay
-    const baseLevel = (isBass ? 0.28 : 0.24) * velocity * normalizationFactor;
+    // Expressive, cushioned peak strike level: velvety and pleasant (never harsh or hammered)
+    const peakLevel = (isBass ? 0.20 : 0.16) * velocity * normalizationFactor;
+    const sustainLevel = Math.max(0.0001, peakLevel * sustainRatio);
 
     const envGain = ctx.createGain();
-    envGain.gain.setValueAtTime(0.0001, startTime);
-    // Soft, cushioned, gentle attack ramp — NEVER spikes to 1.0!
-    envGain.gain.linearRampToValueAtTime(baseLevel, startTime + attackSec);
-    // Long singing natural exponential decay ringing out smoothly
-    envGain.gain.setTargetAtTime(0.00001, startTime + attackSec, decayTau);
+    envGain.gain.setValueAtTime(0.00001, startTime);
+    // 1. Soft, cushioned, gentle attack ramp — zero click, zero spike
+    envGain.gain.linearRampToValueAtTime(peakLevel, startTime + attackSec);
+    // 2. Initial musical decay: note drops smoothly from attack bloom down to singing sustain body
+    envGain.gain.exponentialRampToValueAtTime(sustainLevel, startTime + attackSec + initialDecaySec);
+    // 3. Warm, singing sustain ringing out gently with long decay
+    envGain.gain.setTargetAtTime(0.00001, startTime + attackSec + initialDecaySec, longDecayTau);
 
     // Warm Post-Filtering / Tone Shaping (removes all harsh, shrill frequencies)
     const eqFilter1 = ctx.createBiquadFilter();
     const eqFilter2 = ctx.createBiquadFilter();
 
     if (model === 'rhodes') {
-      // Warm Rhodes: low-mid wooden body + warm smooth 1700Hz lowpass
+      // Warm Rhodes: low-mid wooden body + buttery smooth 1150Hz lowpass
       eqFilter1.type = 'peaking';
-      eqFilter1.frequency.setValueAtTime(250, startTime);
-      eqFilter1.Q.setValueAtTime(1.0, startTime);
-      eqFilter1.gain.setValueAtTime(1.8, startTime);
+      eqFilter1.frequency.setValueAtTime(260, startTime);
+      eqFilter1.Q.setValueAtTime(0.9, startTime);
+      eqFilter1.gain.setValueAtTime(1.4, startTime);
 
       eqFilter2.type = 'lowpass';
-      eqFilter2.frequency.setValueAtTime(1700, startTime);
-      eqFilter2.Q.setValueAtTime(0.60, startTime);
+      eqFilter2.frequency.setValueAtTime(1150, startTime);
+      eqFilter2.Q.setValueAtTime(0.50, startTime);
     } else if (model === 'wurlitzer') {
-      // Warm Wurlitzer: vintage 650Hz soul warmth + warm 1900Hz lowpass
+      // Warm Wurlitzer: vintage 500Hz soul warmth + warm 1300Hz lowpass
+      eqFilter1.type = 'peaking';
+      eqFilter1.frequency.setValueAtTime(500, startTime);
+      eqFilter1.Q.setValueAtTime(0.9, startTime);
+      eqFilter1.gain.setValueAtTime(1.2, startTime);
+
+      eqFilter2.type = 'lowpass';
+      eqFilter2.frequency.setValueAtTime(1300, startTime);
+      eqFilter2.Q.setValueAtTime(0.55, startTime);
+    } else if (model === 'dx7') {
+      // Smooth DX7: warm presence + 1650Hz lowpass (silky glass without ANY digital edge)
+      eqFilter1.type = 'peaking';
+      eqFilter1.frequency.setValueAtTime(1100, startTime);
+      eqFilter1.Q.setValueAtTime(0.9, startTime);
+      eqFilter1.gain.setValueAtTime(1.0, startTime);
+
+      eqFilter2.type = 'lowpass';
+      eqFilter2.frequency.setValueAtTime(1650, startTime);
+      eqFilter2.Q.setValueAtTime(0.55, startTime);
+    } else if (model === 'clavinet') {
+      // Mellow Funk Clavinet: warm dynamic auto-wah sweep + warm 650Hz body
       eqFilter1.type = 'peaking';
       eqFilter1.frequency.setValueAtTime(650, startTime);
-      eqFilter1.Q.setValueAtTime(1.0, startTime);
-      eqFilter1.gain.setValueAtTime(1.6, startTime);
-
-      eqFilter2.type = 'lowpass';
-      eqFilter2.frequency.setValueAtTime(1900, startTime);
-      eqFilter2.Q.setValueAtTime(0.65, startTime);
-    } else if (model === 'dx7') {
-      // Smooth DX7: warm presence + 2600Hz lowpass (silky glass without ANY digital edge)
-      eqFilter1.type = 'peaking';
-      eqFilter1.frequency.setValueAtTime(1300, startTime);
       eqFilter1.Q.setValueAtTime(1.0, startTime);
       eqFilter1.gain.setValueAtTime(1.2, startTime);
 
       eqFilter2.type = 'lowpass';
-      eqFilter2.frequency.setValueAtTime(2600, startTime);
-      eqFilter2.Q.setValueAtTime(0.60, startTime);
-    } else if (model === 'clavinet') {
-      // Mellow Funk Clavinet: warm dynamic auto-wah sweep + warm 750Hz body
-      eqFilter1.type = 'peaking';
-      eqFilter1.frequency.setValueAtTime(750, startTime);
-      eqFilter1.Q.setValueAtTime(1.1, startTime);
-      eqFilter1.gain.setValueAtTime(1.5, startTime);
-
-      eqFilter2.type = 'lowpass';
-      eqFilter2.frequency.setValueAtTime(1600, startTime);
-      eqFilter2.frequency.setTargetAtTime(950, startTime + 0.01, 0.14);
-      eqFilter2.Q.setValueAtTime(1.2, startTime);
+      eqFilter2.frequency.setValueAtTime(1150, startTime);
+      eqFilter2.frequency.setTargetAtTime(800, startTime + 0.02, 0.16);
+      eqFilter2.Q.setValueAtTime(0.70, startTime);
     }
 
     envGain.connect(eqFilter1);
@@ -837,7 +1198,7 @@ export class ChordAudioEngine {
 
     if (model === 'rhodes') {
       // --- SMOOTH VELVETY RHODES MK I ---
-      // Fundamental pure sine core
+      // Fundamental pure rounded sine core
       const oscFund = ctx.createOscillator();
       oscFund.type = 'sine';
       oscFund.frequency.setValueAtTime(freq, startTime);
@@ -847,7 +1208,7 @@ export class ChordAudioEngine {
       oscBody.type = 'sine';
       oscBody.frequency.setValueAtTime(freq * 2.0, startTime);
 
-      // Gentle, musical 3rd harmonic tine chime (soft, never harsh)
+      // Gentle, musical 3rd harmonic tine chime (soft, never harsh, fast bloom decay)
       const oscTine = ctx.createOscillator();
       oscTine.type = 'sine';
       oscTine.frequency.setValueAtTime(freq * 3.0, startTime);
@@ -857,11 +1218,11 @@ export class ChordAudioEngine {
       const gTine = ctx.createGain();
 
       gFund.gain.setValueAtTime(0.82, startTime);
-      gBody.gain.setValueAtTime(0.16, startTime);
+      gBody.gain.setValueAtTime(0.12, startTime);
 
-      // Soft tine chime that gently recedes
-      gTine.gain.setValueAtTime(0.06 * velocity, startTime);
-      gTine.gain.setTargetAtTime(0.0001, startTime + attackSec, 0.12);
+      // Soft tine chime that gently recedes quickly
+      gTine.gain.setValueAtTime(0.025 * velocity, startTime);
+      gTine.gain.setTargetAtTime(0.0001, startTime + attackSec, 0.08);
 
       oscFund.connect(gFund);
       oscBody.connect(gBody);
@@ -878,7 +1239,12 @@ export class ChordAudioEngine {
       });
     } else if (model === 'wurlitzer') {
       // --- WARM VINTAGE WURLITZER 200A ---
-      // Warm triangle reed fundamental
+      // Warm fundamental sine core
+      const oscFund = ctx.createOscillator();
+      oscFund.type = 'sine';
+      oscFund.frequency.setValueAtTime(freq, startTime);
+
+      // Vintage soul reed triangle (filtered)
       const oscReed = ctx.createOscillator();
       oscReed.type = 'triangle';
       oscReed.frequency.setValueAtTime(freq, startTime);
@@ -888,28 +1254,23 @@ export class ChordAudioEngine {
       oscPart2.type = 'sine';
       oscPart2.frequency.setValueAtTime(freq * 2.0, startTime);
 
-      // Subtle 3rd harmonic hollow reed tone
-      const oscPart3 = ctx.createOscillator();
-      oscPart3.type = 'sine';
-      oscPart3.frequency.setValueAtTime(freq * 3.0, startTime);
-
+      const gFund = ctx.createGain();
       const gReed = ctx.createGain();
       const gPart2 = ctx.createGain();
-      const gPart3 = ctx.createGain();
 
-      gReed.gain.setValueAtTime(0.80, startTime);
-      gPart2.gain.setValueAtTime(0.18, startTime);
-      gPart3.gain.setValueAtTime(0.08, startTime);
+      gFund.gain.setValueAtTime(0.68, startTime);
+      gReed.gain.setValueAtTime(0.22, startTime);
+      gPart2.gain.setValueAtTime(0.10, startTime);
 
+      oscFund.connect(gFund);
       oscReed.connect(gReed);
       oscPart2.connect(gPart2);
-      oscPart3.connect(gPart3);
 
+      gFund.connect(envGain);
       gReed.connect(envGain);
       gPart2.connect(envGain);
-      gPart3.connect(envGain);
 
-      [oscReed, oscPart2, oscPart3].forEach(osc => {
+      [oscFund, oscReed, oscPart2].forEach(osc => {
         osc.start(startTime);
         osc.stop(stopTime);
         oscillatorsToStop.push(osc);
@@ -921,24 +1282,24 @@ export class ChordAudioEngine {
       carrier1.type = 'sine';
       carrier1.frequency.setValueAtTime(freq, startTime);
 
-      // Gentle glassy modulator (very subtle modulation index - velvety, never harsh)
+      // Gentle glassy modulator (subtle modulation index - velvety, silky, never harsh)
       const modulator = ctx.createOscillator();
       modulator.type = 'sine';
       modulator.frequency.setValueAtTime(freq * 1.0, startTime);
 
       const modGain = ctx.createGain();
-      modGain.gain.setValueAtTime(freq * 0.26 * velocity, startTime);
-      modGain.gain.setTargetAtTime(freq * 0.03, startTime + 0.01, 0.14);
+      modGain.gain.setValueAtTime(freq * 0.065 * velocity, startTime);
+      modGain.gain.setTargetAtTime(freq * 0.006, startTime + attackSec, 0.10);
 
       modulator.connect(modGain);
       modGain.connect(carrier1.frequency);
 
-      // Second carrier: subtle warm chorus detune (+1 cent)
+      // Second carrier: subtle warm chorus detune (+0.8 cent)
       const carrier2 = ctx.createOscillator();
       carrier2.type = 'sine';
-      carrier2.frequency.setValueAtTime(freq * 1.0006, startTime);
+      carrier2.frequency.setValueAtTime(freq * 1.0005, startTime);
 
-      // Soft crystalline bell harmonic
+      // Soft crystalline bell harmonic (quiet, glassy, no sharp click)
       const oscBell = ctx.createOscillator();
       oscBell.type = 'sine';
       oscBell.frequency.setValueAtTime(freq * 2.0, startTime);
@@ -947,9 +1308,10 @@ export class ChordAudioEngine {
       const gCar2 = ctx.createGain();
       const gBell = ctx.createGain();
 
-      gCar1.gain.setValueAtTime(0.72, startTime);
-      gCar2.gain.setValueAtTime(0.22, startTime);
-      gBell.gain.setValueAtTime(0.12, startTime);
+      gCar1.gain.setValueAtTime(0.76, startTime);
+      gCar2.gain.setValueAtTime(0.20, startTime);
+      gBell.gain.setValueAtTime(0.04 * velocity, startTime);
+      gBell.gain.setTargetAtTime(0.0001, startTime + attackSec, 0.10);
 
       carrier1.connect(gCar1);
       carrier2.connect(gCar2);
@@ -966,39 +1328,39 @@ export class ChordAudioEngine {
       });
     } else if (model === 'clavinet') {
       // --- WARM FUNKY CLAVINET D6 ---
-      // Filtered triangle string core (smooth, rounded)
+      // Warm fundamental sine core
+      const oscFund = ctx.createOscillator();
+      oscFund.type = 'sine';
+      oscFund.frequency.setValueAtTime(freq, startTime);
+
+      // Filtered triangle string (smooth and musical)
       const oscString = ctx.createOscillator();
       oscString.type = 'triangle';
       oscString.frequency.setValueAtTime(freq, startTime);
 
-      // Upper octave warmth
-      const oscUpper = ctx.createOscillator();
-      oscUpper.type = 'sine';
-      oscUpper.frequency.setValueAtTime(freq * 2.0, startTime);
-
-      // Gentle pluck tick (soft, musical)
+      // Gentle pluck tick (soft felt plectrum, no sharp metallic click)
       const oscPluck = ctx.createOscillator();
       oscPluck.type = 'sine';
-      oscPluck.frequency.setValueAtTime(freq * 3.5, startTime);
+      oscPluck.frequency.setValueAtTime(freq * 2.0, startTime);
 
+      const gFund = ctx.createGain();
       const gString = ctx.createGain();
-      const gUpper = ctx.createGain();
       const gPluck = ctx.createGain();
 
-      gString.gain.setValueAtTime(0.72, startTime);
-      gUpper.gain.setValueAtTime(0.22, startTime);
-      gPluck.gain.setValueAtTime(0.06 * velocity, startTime);
-      gPluck.gain.setTargetAtTime(0.0001, startTime + attackSec, 0.014);
+      gFund.gain.setValueAtTime(0.52, startTime);
+      gString.gain.setValueAtTime(0.42, startTime);
+      gPluck.gain.setValueAtTime(0.03 * velocity, startTime);
+      gPluck.gain.setTargetAtTime(0.0001, startTime + attackSec, 0.025);
 
+      oscFund.connect(gFund);
       oscString.connect(gString);
-      oscUpper.connect(gUpper);
       oscPluck.connect(gPluck);
 
+      gFund.connect(envGain);
       gString.connect(envGain);
-      gUpper.connect(envGain);
       gPluck.connect(envGain);
 
-      [oscString, oscUpper, oscPluck].forEach(osc => {
+      [oscFund, oscString, oscPluck].forEach(osc => {
         osc.start(startTime);
         osc.stop(stopTime);
         oscillatorsToStop.push(osc);
@@ -1035,7 +1397,7 @@ export class ChordAudioEngine {
 
   /**
    * Schedules a complete humanized, voice-led chord at `startTime` (AudioContext time).
-   * Playback is cushioned and velvety with smooth chord transitions.
+   * Playback is cushioned, velvety, and expressive with smooth chord transitions.
    */
   public scheduleChordAtTime(
     chordSymbol: string,
@@ -1081,11 +1443,11 @@ export class ChordAudioEngine {
       const noteOffset = Math.max(0, idx * baseStaggerSec + jitterSec);
       const noteStart = startTime + noteOffset;
 
-      // Soft, expressive velocity contour: warm, gentle, never harsh or hammered
+      // Soft, expressive velocity contour: warm, gentle, pleasant, never harsh or hammered
       const isTopVoice = idx === orderedVoices.length - 1;
-      const contour = voice.isBass ? 1.02 : isTopVoice ? 1.02 : 0.96;
-      const humanVelocityVariance = 0.80 + Math.random() * 0.12;
-      const velocity = Math.min(0.88, contour * humanVelocityVariance * (accentMultiplier * 0.86));
+      const contour = voice.isBass ? 1.01 : isTopVoice ? 1.01 : 0.97;
+      const humanVelocityVariance = 0.82 + Math.random() * 0.10;
+      const velocity = Math.min(0.74, contour * humanVelocityVariance * (accentMultiplier * 0.72));
 
       this.scheduleSingleVoice(
         voice.midi,
@@ -1234,6 +1596,14 @@ export class ChordAudioEngine {
         accent
       );
 
+      // Schedule subtle acoustic jazz brush back beat for each beat in this chord step
+      const numBeats = Math.max(1, Math.round(step.beats));
+      for (let b = 0; b < numBeats; b++) {
+        const beatTime = playTime + b * secPerBeat;
+        const currentBeatInMeasure = (step.beatInMeasure + b) % this.meter;
+        this.scheduleBackbeatAtTime(beatTime, currentBeatInMeasure, secPerBeat);
+      }
+
       // Schedule sample-synced visual highlight
       const delayMs = Math.max(0, (playTime - this.ctx.currentTime) * 1000);
       const mIdx = step.measureIdx;
@@ -1293,6 +1663,293 @@ export class ChordAudioEngine {
 
   public setIsLooping(loop: boolean) {
     this.isLooping = loop;
+  }
+
+  // ==========================================================================
+  // ACOUSTIC JAZZ BRUSH BACK BEAT SYNTHESIS & CONTROLS
+  // ==========================================================================
+
+  public isBeatEnabled(): boolean {
+    return this.isBeatActive;
+  }
+
+  public setBeatActive(active: boolean) {
+    this.isBeatActive = active;
+    this.updateDrumGain();
+  }
+
+  public toggleBeat(): boolean {
+    this.isBeatActive = !this.isBeatActive;
+    this.updateDrumGain();
+    return this.isBeatActive;
+  }
+
+  public getBeatVolume(): number {
+    return this.beatVolume;
+  }
+
+  public setBeatVolume(vol: number) {
+    this.beatVolume = Math.max(0, Math.min(1, vol));
+    this.updateDrumGain();
+  }
+
+  private updateDrumGain() {
+    if (!this.ctx || !this.drumGain) return;
+    const target = this.isBeatActive ? this.beatVolume : 0;
+    this.drumGain.gain.cancelScheduledValues(this.ctx.currentTime);
+    this.drumGain.gain.setTargetAtTime(target, this.ctx.currentTime, 0.02);
+  }
+
+  private getNoiseBuffer(ctx: AudioContext): AudioBuffer {
+    if (!this.noiseBuffer) {
+      const length = Math.floor(ctx.sampleRate * 2.0);
+      const buf = ctx.createBuffer(1, length, ctx.sampleRate);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < length; i++) {
+        data[i] = Math.random() * 2 - 1;
+      }
+      this.noiseBuffer = buf;
+    }
+    return this.noiseBuffer;
+  }
+
+  /**
+   * Delicate acoustic feather kick:
+   * Very soft, warm low-end thud (sine oscillator with gentle pitch drop 64Hz -> 42Hz,
+   * smooth attack, lowpass at 160Hz to prevent click, quiet velocity).
+   */
+  private triggerFeatherKick(time: number, velocity = 0.25) {
+    if (!this.ctx || !this.drumGain) return;
+    const ctx = this.ctx;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    const filter = ctx.createBiquadFilter();
+
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(64, time);
+    osc.frequency.exponentialRampToValueAtTime(42, time + 0.08);
+
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(160, time);
+    filter.Q.setValueAtTime(0.707, time);
+
+    gain.gain.setValueAtTime(0.0001, time);
+    gain.gain.linearRampToValueAtTime(velocity * 0.42, time + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.13);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.drumGain);
+
+    osc.start(time);
+    osc.stop(time + 0.14);
+  }
+
+  /**
+   * Delicate brushed snare sweep / stir:
+   * Filtered white noise with smooth swelling attack and gentle textured decay,
+   * emulating the soft circular brush stir on a coated snare head.
+   */
+  private triggerBrushedSnareSweep(time: number, durationSec = 0.22, velocity = 0.22) {
+    if (!this.ctx || !this.drumGain) return;
+    const ctx = this.ctx;
+
+    const source = ctx.createBufferSource();
+    source.buffer = this.getNoiseBuffer(ctx);
+    source.playbackRate.setValueAtTime(0.96 + Math.random() * 0.08, time);
+
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(2800, time);
+    bp.Q.setValueAtTime(1.1, time);
+
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.setValueAtTime(1050, time);
+
+    const gain = ctx.createGain();
+    const actualDur = Math.max(0.12, durationSec);
+    gain.gain.setValueAtTime(0.0001, time);
+    gain.gain.linearRampToValueAtTime(velocity * 0.30, time + 0.035);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + actualDur);
+
+    source.connect(bp);
+    bp.connect(hp);
+    hp.connect(gain);
+    gain.connect(this.drumGain);
+
+    const offset = Math.random() * 1.5;
+    source.start(time, offset);
+    source.stop(time + actualDur + 0.02);
+  }
+
+  /**
+   * Delicate brushed snare backbeat tap:
+   * Crisp but soft brush snap with snare wire flutter + warm 180Hz wooden shell body.
+   */
+  private triggerBrushedSnareTap(time: number, velocity = 0.36) {
+    if (!this.ctx || !this.drumGain) return;
+    const ctx = this.ctx;
+
+    // 1. Brushed wire response (noise)
+    const noise = ctx.createBufferSource();
+    noise.buffer = this.getNoiseBuffer(ctx);
+    noise.playbackRate.setValueAtTime(1.0 + Math.random() * 0.1, time);
+
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(3400, time);
+    bp.Q.setValueAtTime(1.3, time);
+
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.setValueAtTime(1600, time);
+
+    const noiseGain = ctx.createGain();
+    noiseGain.gain.setValueAtTime(0.0001, time);
+    noiseGain.gain.linearRampToValueAtTime(velocity * 0.44, time + 0.005);
+    noiseGain.gain.exponentialRampToValueAtTime(0.0001, time + 0.11);
+
+    noise.connect(bp);
+    bp.connect(hp);
+    hp.connect(noiseGain);
+    noiseGain.connect(this.drumGain);
+
+    const offset = Math.random() * 1.5;
+    noise.start(time, offset);
+    noise.stop(time + 0.12);
+
+    // 2. Subtle wooden shell body tone
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(182, time);
+    osc.frequency.exponentialRampToValueAtTime(155, time + 0.05);
+
+    const bodyFilter = ctx.createBiquadFilter();
+    bodyFilter.type = 'lowpass';
+    bodyFilter.frequency.setValueAtTime(320, time);
+
+    const bodyGain = ctx.createGain();
+    bodyGain.gain.setValueAtTime(0.0001, time);
+    bodyGain.gain.linearRampToValueAtTime(velocity * 0.18, time + 0.004);
+    bodyGain.gain.exponentialRampToValueAtTime(0.0001, time + 0.06);
+
+    osc.connect(bodyFilter);
+    bodyFilter.connect(bodyGain);
+    bodyGain.connect(this.drumGain);
+
+    osc.start(time);
+    osc.stop(time + 0.07);
+  }
+
+  /**
+   * Brushed hi-hat / cymbal ride tap:
+   * Whispering high-frequency texture with fast silky decay.
+   */
+  private triggerBrushedHiHat(time: number, velocity = 0.22, decaySec = 0.055) {
+    if (!this.ctx || !this.drumGain) return;
+    const ctx = this.ctx;
+
+    const source = ctx.createBufferSource();
+    source.buffer = this.getNoiseBuffer(ctx);
+    source.playbackRate.setValueAtTime(1.02 + Math.random() * 0.1, time);
+
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.setValueAtTime(7800, time);
+    hp.Q.setValueAtTime(1.1, time);
+
+    const peak = ctx.createBiquadFilter();
+    peak.type = 'peaking';
+    peak.frequency.setValueAtTime(10800, time);
+    peak.gain.setValueAtTime(2.5, time);
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, time);
+    gain.gain.linearRampToValueAtTime(velocity * 0.26, time + 0.003);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + decaySec);
+
+    source.connect(hp);
+    hp.connect(peak);
+    peak.connect(gain);
+    gain.connect(this.drumGain);
+
+    const offset = Math.random() * 1.5;
+    source.start(time, offset);
+    source.stop(time + decaySec + 0.015);
+  }
+
+  /**
+   * Schedules a subtle jazz brush groove beat:
+   * Feather kick on downbeats, delicate snare sweeps and backbeat taps,
+   * brushed hi-hat with authentic swing triplet skip!
+   */
+  private scheduleBackbeatAtTime(time: number, beatInMeasure: number, secPerBeat: number) {
+    if (!this.isBeatActive) return;
+    if (!this.customDrumLoopBuffer) return; // Cut base drum sound entirely
+
+    if (this.ctx && this.drumGain) {
+      if (beatInMeasure === 0) {
+        const source = this.ctx.createBufferSource();
+        source.buffer = this.customDrumLoopBuffer;
+        const rate = this.bpm / this.customDrumLoopBaseBpm;
+        source.playbackRate.setValueAtTime(Math.max(0.4, Math.min(2.5, rate)), time);
+
+        const loopGain = this.ctx.createGain();
+        loopGain.gain.setValueAtTime(0.85, time);
+
+        source.connect(loopGain);
+        loopGain.connect(this.drumGain);
+
+        source.start(time);
+        source.stop(time + (this.customDrumLoopBuffer.duration / rate));
+      }
+      return;
+    }
+
+    if (this.meter === 3) {
+      // 3/4 Jazz Waltz Swing Feel
+      if (beatInMeasure === 0) {
+        this.triggerFeatherKick(time, 0.26);
+        this.triggerBrushedSnareSweep(time, secPerBeat * 0.7, 0.20);
+        this.triggerBrushedHiHat(time, 0.22, 0.06);
+      } else if (beatInMeasure === 1) {
+        this.triggerBrushedSnareTap(time, 0.34);
+        this.triggerBrushedHiHat(time, 0.22, 0.05);
+      } else {
+        this.triggerBrushedSnareTap(time, 0.32);
+        this.triggerBrushedHiHat(time, 0.22, 0.05);
+        // Swing triplet skip on beat 3
+        const skipTime = time + (2 / 3) * secPerBeat;
+        this.triggerBrushedHiHat(skipTime, 0.16, 0.032);
+      }
+    } else {
+      // 4/4 Jazz Brush Swing Feel
+      if (beatInMeasure === 0) {
+        // Beat 1: Feather kick + soft brush sweep + brushed hat
+        this.triggerFeatherKick(time, 0.26);
+        this.triggerBrushedSnareSweep(time, secPerBeat * 0.7, 0.20);
+        this.triggerBrushedHiHat(time, 0.22, 0.06);
+      } else if (beatInMeasure === 1) {
+        // Beat 2: Backbeat brushed snare tap + brushed hat + swing triplet skip!
+        this.triggerBrushedSnareTap(time, 0.38);
+        this.triggerBrushedHiHat(time, 0.24, 0.05);
+        const skipTime = time + (2 / 3) * secPerBeat;
+        this.triggerBrushedHiHat(skipTime, 0.16, 0.032);
+      } else if (beatInMeasure === 2) {
+        // Beat 3: Subtle feather kick (feathered pulse) + brush sweep + hat
+        this.triggerFeatherKick(time, 0.20);
+        this.triggerBrushedSnareSweep(time, secPerBeat * 0.7, 0.18);
+        this.triggerBrushedHiHat(time, 0.22, 0.06);
+      } else {
+        // Beat 4: Backbeat brushed snare tap + brushed hat + swing triplet skip!
+        this.triggerBrushedSnareTap(time, 0.38);
+        this.triggerBrushedHiHat(time, 0.24, 0.05);
+        const skipTime = time + (2 / 3) * secPerBeat;
+        this.triggerBrushedHiHat(skipTime, 0.17, 0.032);
+      }
+    }
   }
 }
 

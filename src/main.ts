@@ -76,6 +76,9 @@ interface VaultPayload {
   savedSections: SavedSections;
   baseProgressionsPool: string[];
   selectedEPModel?: ElectricPianoModel;
+  barsPerRow?: 1 | 2;
+  isBeatActive?: boolean;
+  bpm?: number;
 }
 
 interface BeforeInstallPromptEvent extends Event {
@@ -1711,6 +1714,182 @@ export class TargetBackwardEngine {
     };
   }
 
+  /**
+   * Adapts a progression to minor specifically for dark reharmonization techniques:
+   * "For the dark reharm techniques, I understand if a major progression is being altered,
+   * the key needs be minor. Those progressions can have their base chords altered to fit
+   * the correct chord quality for this reharm techniques specifically"
+   */
+  static adaptProgressionForDarkTechnique(
+    measures: ChordBeatItem[][],
+    techniqueId: string
+  ): ChordBeatItem[][] {
+    if (!measures || measures.length === 0) return measures;
+
+    const firstItem = measures[0]?.[0];
+    if (!firstItem || !firstItem.chord) return measures;
+
+    const firstChord = Chord.fromSymbol(firstItem.chord);
+    const tonicRoot = firstChord.root;
+
+    // Palettes for the tonic key
+    const pal = this.buildDarkPalette(tonicRoot);
+
+    return measures.map((meas, mIdx) => {
+      return meas.map((item, cIdx) => {
+        if (!item.chord) return { ...item };
+        const cObj = Chord.fromSymbol(item.chord);
+        const pitchDiff = ((NOTE_TO_PITCH[cObj.root] ?? 0) - (NOTE_TO_PITCH[tonicRoot] ?? 0) + 12) % 12;
+
+        let adaptedChord: Chord = cObj;
+
+        switch (techniqueId) {
+          case 'dorian_dark': {
+            // Dorian: 1 (i), 2 (ii), b3 (bIII), 4 (IV), 5 (v), 6 (vi°), b7 (bVII)
+            // Hallmark: Minor tonic (im, im7, im6), Major/Dominant IV chord (IV, IV7)
+            if (pitchDiff === 0) {
+              adaptedChord = mIdx === 0 && cIdx === 0 ? pal.im7 : pal.i;
+            } else if (pitchDiff === 2) {
+              adaptedChord = pal.ii7;
+            } else if (pitchDiff === 4) {
+              const b3Root = this.transpose(tonicRoot, 3, false);
+              adaptedChord = new Chord(b3Root, 'maj7', null, false);
+            } else if (pitchDiff === 5) {
+              // Hallmark Dorian IV is Major / Dominant 7th due to the natural 6th!
+              adaptedChord = cObj.quality.includes('7') ? pal.IV7 : pal.IV;
+            } else if (pitchDiff === 7) {
+              // Minor v7
+              const vRoot = this.transpose(tonicRoot, 7, false);
+              adaptedChord = new Chord(vRoot, 'm7', null, false);
+            } else if (pitchDiff === 9) {
+              // Degree 6: Dorian bVII (F in G) or ii7
+              const b7Root = this.transpose(tonicRoot, 10, false);
+              adaptedChord = new Chord(b7Root, 'maj', null, false);
+            } else if (pitchDiff === 11) {
+              // Degree 7: Dorian bVII7
+              const b7Root = this.transpose(tonicRoot, 10, false);
+              adaptedChord = new Chord(b7Root, '7', null, false);
+            } else if (!cObj.isMinorTarget() && pitchDiff !== 5) {
+              adaptedChord = new Chord(cObj.root, 'm', null, cObj.preferSharps);
+            }
+            break;
+          }
+
+          case 'chromatic_mediant': {
+            // Strictly Chromatic Mediants (i, bvi, biii, bVI, bVI+)
+            if (pitchDiff === 0) {
+              adaptedChord = pal.i;
+            } else if (pitchDiff === 7) {
+              adaptedChord = pal.bvi;
+            } else if (pitchDiff === 9 || pitchDiff === 8) {
+              adaptedChord = pal.bVI;
+            } else if (pitchDiff === 5) {
+              adaptedChord = new Chord(cObj.root, 'm', null, false);
+            } else if (pitchDiff === 2 || pitchDiff === 3 || pitchDiff === 4) {
+              adaptedChord = pal.biii;
+            } else if (!cObj.isMinorTarget()) {
+              adaptedChord = new Chord(cObj.root, 'm', null, cObj.preferSharps);
+            }
+            break;
+          }
+
+          case 'gothic_dominant': {
+            // Strictly Harmonic Minor & Altered Gothic Dominants (i, im(maj7), ivm6, iiø, bVI+, V7(b9), V7+)
+            if (pitchDiff === 0) {
+              adaptedChord = mIdx === 0 && cIdx === 0 ? pal.imMaj7 : pal.i;
+            } else if (pitchDiff === 7) {
+              adaptedChord = pal.V7b9;
+            } else if (pitchDiff === 5) {
+              adaptedChord = pal.ivMin6;
+            } else if (pitchDiff === 2) {
+              adaptedChord = pal.iiHalf;
+            } else if (pitchDiff === 9 || pitchDiff === 8) {
+              adaptedChord = pal.bVIaug;
+            } else if (pitchDiff === 11) {
+              adaptedChord = pal.viiDim7;
+            } else if (pitchDiff === 4 || pitchDiff === 3) {
+              const b3Root = this.transpose(tonicRoot, 3, false);
+              adaptedChord = new Chord(b3Root, 'maj', null, false);
+            } else if (!cObj.isMinorTarget()) {
+              adaptedChord = new Chord(cObj.root, 'm', null, cObj.preferSharps);
+            }
+            break;
+          }
+
+          case 'neapolitan_slide': {
+            // Strictly Phrygian / Neapolitan half-step motion (i, bII, biim, bII7)
+            if (pitchDiff === 0) {
+              adaptedChord = pal.i;
+            } else if (pitchDiff === 1) {
+              adaptedChord = pal.bII;
+            } else if (pitchDiff === 7) {
+              adaptedChord = pal.bII7;
+            } else if (pitchDiff === 5) {
+              adaptedChord = new Chord(cObj.root, 'm', null, false);
+            } else if (pitchDiff === 9 || pitchDiff === 8) {
+              adaptedChord = pal.bII;
+            } else if (pitchDiff === 2) {
+              adaptedChord = pal.biim;
+            } else if (!cObj.isMinorTarget()) {
+              adaptedChord = new Chord(cObj.root, 'm', null, cObj.preferSharps);
+            }
+            break;
+          }
+
+          case 'diminished_axis': {
+            // Strictly Diminished 7th & Augmented Axis (#i°7, #iv°7, vii°7, V+, i)
+            if (pitchDiff === 0) {
+              adaptedChord = pal.i;
+            } else if (pitchDiff === 7) {
+              adaptedChord = pal.Vaug;
+            } else if (pitchDiff === 5 || pitchDiff === 6) {
+              adaptedChord = pal.sh4Dim7;
+            } else if (pitchDiff === 2 || pitchDiff === 1) {
+              adaptedChord = pal.sh1Dim7;
+            } else if (pitchDiff === 11) {
+              adaptedChord = pal.viiDim7;
+            } else if (pitchDiff === 9 || pitchDiff === 8) {
+              adaptedChord = pal.sh4Dim7;
+            } else if (!cObj.isMinorTarget()) {
+              adaptedChord = new Chord(cObj.root, 'm', null, cObj.preferSharps);
+            }
+            break;
+          }
+
+          case 'elfman_modulation':
+          default: {
+            // Strictly Restless Key Modulations & Minor Line Cliché (m -> m(maj7) -> m7 -> m6)
+            if (pitchDiff === 0) {
+              adaptedChord = pal.imMaj7;
+            } else if (pitchDiff === 5) {
+              adaptedChord = pal.i6;
+            } else if (pitchDiff === 7) {
+              const vRoot = this.transpose(tonicRoot, 7, false);
+              adaptedChord = new Chord(vRoot, 'm7', null, false);
+            } else if (pitchDiff === 9 || pitchDiff === 8) {
+              adaptedChord = pal.im7;
+            } else if (pitchDiff === 2 || pitchDiff === 3) {
+              const b3Root = this.transpose(tonicRoot, 3, false);
+              adaptedChord = new Chord(b3Root, 'm(maj7)', null, false);
+            } else if (!cObj.isMinorTarget()) {
+              adaptedChord = new Chord(cObj.root, 'm', null, cObj.preferSharps);
+            }
+            break;
+          }
+        }
+
+        if (cObj.bass) {
+          adaptedChord = new Chord(adaptedChord.root, adaptedChord.quality, cObj.bass, adaptedChord.preferSharps);
+        }
+
+        return {
+          ...item,
+          chord: adaptedChord.toString()
+        };
+      });
+    });
+  }
+
   static fillDarkTargetBar(targetGrid: BeatSlot[], H: string, techniqueId: string, strategy: string) {
     const firstTarget = targetGrid[0].chord;
     const palH = this.buildDarkPalette(H);
@@ -2156,10 +2335,13 @@ export class TargetBackwardEngine {
       return measures.map(m => m.map(c => ({ ...c })));
     }
     const mode: ReharmMode = options.mode || 'APPROACH_TARGETING';
-    if (mode === 'FULL_REFRAME' && this.isDarkTechnique(techniqueId)) {
+    if (this.isDarkTechnique(techniqueId)) {
       const lockedSet = new Set(options.lockedMeasures || []);
       const targetMIdx = this.resolveTargetMeasureIndex(measures.length, options.targetIndex);
-      return this.reharmonizeProgressionDarkWithLocks(measures, techniqueId, strategy, lockedSet, targetMIdx);
+      if (mode === 'FULL_REFRAME') {
+        return this.reharmonizeProgressionDarkWithLocks(measures, techniqueId, strategy, lockedSet, targetMIdx);
+      }
+      return this.reharmonizeProgressionBackward(measures, techniqueId, strategy, options);
     }
     return this.reharmonizeProgressionBackward(measures, techniqueId, strategy, options);
   }
@@ -2175,19 +2357,24 @@ export class TargetBackwardEngine {
       return measures.map(m => m.map(c => ({ ...c })));
     }
 
+    // Adapt major progressions to minor specifically for dark reharm techniques
+    const effectiveMeasures = this.isDarkTechnique(techniqueId)
+      ? this.adaptProgressionForDarkTechnique(measures, techniqueId)
+      : measures;
+
     const hasExplicitTarget =
       options.targetIndex !== undefined &&
       options.targetIndex !== null &&
       options.targetIndex >= 0 &&
-      options.targetIndex < measures.length;
+      options.targetIndex < effectiveMeasures.length;
 
-    if (!hasExplicitTarget && measures.length > 4) {
-      let splitIdx = Math.ceil(measures.length / 2);
-      if (measures.length === 9) {
+    if (!hasExplicitTarget && effectiveMeasures.length > 4) {
+      let splitIdx = Math.ceil(effectiveMeasures.length / 2);
+      if (effectiveMeasures.length === 9) {
         splitIdx = 3;
-      } else if (measures.length % 4 === 0) {
+      } else if (effectiveMeasures.length % 4 === 0) {
         splitIdx = 4;
-      } else if (measures.length > 8) {
+      } else if (effectiveMeasures.length > 8) {
         splitIdx = 4;
       }
 
@@ -2198,10 +2385,10 @@ export class TargetBackwardEngine {
       const locked = options.lockedMeasures || [];
       const firstLocks = locked.filter(m => m < splitIdx);
       const restLocks = locked.filter(m => m >= splitIdx).map(m => m - splitIdx);
-      const rootHomeChord = options.loopTargetChord || Chord.fromSymbol(measures[0][0].chord);
+      const rootHomeChord = options.loopTargetChord || Chord.fromSymbol(effectiveMeasures[0][0].chord);
 
       const firstPart = this.executeReharm(
-        measures.slice(0, splitIdx),
+        effectiveMeasures.slice(0, splitIdx),
         techniqueId,
         strategy,
         {
@@ -2212,7 +2399,7 @@ export class TargetBackwardEngine {
         }
       );
       const restPart = this.executeReharm(
-        measures.slice(splitIdx),
+        effectiveMeasures.slice(splitIdx),
         techniqueId,
         restStrategy,
         {
@@ -2224,7 +2411,7 @@ export class TargetBackwardEngine {
       );
       return [...firstPart, ...restPart];
     }
-    return this.executeSinglePhraseReharm(measures, techniqueId, strategy, options);
+    return this.executeSinglePhraseReharm(effectiveMeasures, techniqueId, strategy, options);
   }
 
   static executeReharmRequest(request: ReharmRequest): ChordSlot[] {
@@ -2453,25 +2640,35 @@ function updateEPPopoverUI() {
 function updateTransportUI(isPlaying = audioEngine.getIsPlaying()) {
   const playBtn = document.getElementById('playProgBtn');
   const playIcon = document.getElementById('playProgIcon');
-  const bpmBadge = document.getElementById('bpmBadgeText');
-  const bpmRange = document.getElementById('bpmRangeInput') as HTMLInputElement | null;
+  const playLabel = document.getElementById('playProgLabel');
+  const tempoBtn = document.getElementById('tempoCycleBtn');
+  const tempoBadge = document.getElementById('tempoBadgeText');
   const loopBtn = document.getElementById('loopToggleBtn');
   const epBtn = document.getElementById('epSelectorBtn');
   const epBadge = document.getElementById('epBadgeText');
+  const beatBtn = document.getElementById('beatToggleBtn');
 
   if (playBtn && playIcon) {
     if (isPlaying) {
-      playBtn.className = 'px-3.5 py-2.5 border-r border-slate-200 dark:border-[#0c4a6e]/60 shrink-0 cursor-pointer active:scale-95 transition-all flex items-center justify-center text-sky-600 dark:text-[#38bdf8] bg-sky-500/10 dark:bg-[#0c4a6e]/60';
+      playBtn.className = 'col-span-1 py-3 px-2 bg-sky-50 dark:bg-[#0c4a6e]/80 border border-sky-500/40 dark:border-[#38bdf8]/50 rounded-[8px] text-sky-600 dark:text-[#38bdf8] shadow-sm transition-all cursor-pointer active:scale-95 flex items-center justify-center gap-1 font-mono-tabular text-xs font-black select-none';
       playIcon.innerHTML = `<svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>`;
+      if (playLabel) playLabel.textContent = 'Stop';
+      playBtn.setAttribute('title', 'Stop playback (Space)');
     } else {
-      playBtn.className = 'px-3.5 py-2.5 border-r border-slate-200 dark:border-[#0c4a6e]/60 shrink-0 cursor-pointer active:scale-95 transition-all flex items-center justify-center text-slate-900 dark:text-white hover:text-sky-600 dark:hover:text-[#38bdf8] hover:bg-slate-100 dark:hover:bg-[#0c4a6e]/40';
+      playBtn.className = 'col-span-1 py-3 px-2 bg-white dark:bg-[#071d2c] hover:bg-slate-50 dark:hover:bg-[#0c4a6e]/50 border border-slate-300/90 dark:border-[#0c4a6e]/70 rounded-[8px] text-slate-700 dark:text-slate-200 hover:text-sky-600 dark:hover:text-[#38bdf8] shadow-sm transition-all cursor-pointer active:scale-95 flex items-center justify-center gap-1 font-mono-tabular text-xs font-black select-none';
       playIcon.innerHTML = `<svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`;
+      if (playLabel) playLabel.textContent = 'Play';
+      playBtn.setAttribute('title', 'Play progression (Space)');
     }
   }
 
   const bpm = audioEngine.getBpm();
-  if (bpmBadge) bpmBadge.textContent = String(bpm);
-  if (bpmRange && Number(bpmRange.value) !== bpm) bpmRange.value = String(bpm);
+  if (tempoBadge) {
+    tempoBadge.textContent = `${bpm} BPM`;
+  }
+  if (tempoBtn) {
+    tempoBtn.setAttribute('title', `Tempo: ${bpm} BPM (Tap to cycle: 60, 70, 80, 90, 100, 110, 120 | Press T)`);
+  }
 
   const currentModel = state.selectedEPModel || audioEngine.getModel();
   const epInfo = EP_MODELS[currentModel] || EP_MODELS.rhodes;
@@ -2480,14 +2677,26 @@ function updateTransportUI(isPlaying = audioEngine.getIsPlaying()) {
     epBadge.textContent = epInfo.badge;
   }
   if (epBtn) {
-    epBtn.title = `Electric Piano: ${epInfo.name} (${epInfo.description}) — Tap to cycle | Hold for styles`;
+    epBtn.title = `Keys: ${epInfo.name} (${epInfo.description}) — Tap to cycle | Hold for styles | Press K`;
   }
 
   if (loopBtn) {
     if (audioEngine.getIsLooping()) {
-      loopBtn.className = 'px-3.5 py-2.5 border-l border-slate-200 dark:border-[#0c4a6e]/60 shrink-0 cursor-pointer active:scale-95 transition-all flex items-center justify-center text-sky-600 dark:text-[#38bdf8] bg-sky-500/10 dark:bg-[#0c4a6e]/60';
+      loopBtn.className = 'w-full py-2.5 px-1 sm:px-2 cursor-pointer active:scale-95 transition-all flex items-center justify-center gap-1 select-none text-sky-600 dark:text-[#38bdf8] bg-sky-500/10 dark:bg-[#0c4a6e]/60';
+      loopBtn.title = 'Repeat: ON (Tap to toggle loop | Press L)';
     } else {
-      loopBtn.className = 'px-3.5 py-2.5 border-l border-slate-200 dark:border-[#0c4a6e]/60 shrink-0 cursor-pointer active:scale-95 transition-all flex items-center justify-center text-slate-400 hover:text-slate-700 dark:text-slate-500 dark:hover:text-slate-300';
+      loopBtn.className = 'w-full py-2.5 px-1 sm:px-2 cursor-pointer active:scale-95 transition-all flex items-center justify-center gap-1 select-none text-slate-400 hover:text-slate-700 dark:text-slate-500 dark:hover:text-slate-300 hover:bg-slate-100/50 dark:hover:bg-[#0c4a6e]/20';
+      loopBtn.title = 'Repeat: OFF (Tap to toggle loop | Press L)';
+    }
+  }
+
+  if (beatBtn) {
+    if (audioEngine.isBeatEnabled()) {
+      beatBtn.className = 'w-full py-2.5 px-1 sm:px-2 cursor-pointer active:scale-95 transition-all flex items-center justify-center gap-1 select-none text-sky-600 dark:text-[#38bdf8] bg-sky-500/10 dark:bg-[#0c4a6e]/60';
+      beatBtn.title = 'Drums: ACTIVE (Tap to mute | Press B)';
+    } else {
+      beatBtn.className = 'w-full py-2.5 px-1 sm:px-2 cursor-pointer active:scale-95 transition-all flex items-center justify-center gap-1 select-none text-slate-400 hover:text-slate-700 dark:text-slate-500 dark:hover:text-slate-300 hover:bg-slate-100/50 dark:hover:bg-[#0c4a6e]/20';
+      beatBtn.title = 'Drums: MUTED (Tap to activate | Press B)';
     }
   }
 }
@@ -2678,7 +2887,10 @@ function loadInitialVaultSync(): VaultPayload {
       dark: dedupeProgressions(DEFAULT_SAVED_PROGRESSIONS)
     },
     baseProgressionsPool: dedupeProgressions(DEFAULT_PROGRESSIONS),
-    selectedEPModel: 'rhodes'
+    selectedEPModel: 'rhodes',
+    barsPerRow: 2,
+    isBeatActive: true,
+    bpm: 80
   };
 
   try {
@@ -2700,7 +2912,10 @@ function loadInitialVaultSync(): VaultPayload {
           theme: parsed.theme === 'light' ? 'light' : 'dark',
           savedSections: sections,
           baseProgressionsPool: migratedPool,
-          selectedEPModel: parsed.selectedEPModel && EP_MODELS[parsed.selectedEPModel] ? parsed.selectedEPModel : 'rhodes'
+          selectedEPModel: parsed.selectedEPModel && EP_MODELS[parsed.selectedEPModel] ? parsed.selectedEPModel : 'rhodes',
+          barsPerRow: parsed.barsPerRow === 1 ? 1 : 2,
+          isBeatActive: parsed.isBeatActive !== undefined ? parsed.isBeatActive : true,
+          bpm: typeof parsed.bpm === 'number' && parsed.bpm >= 50 && parsed.bpm <= 220 ? parsed.bpm : 80
         };
       }
     }
@@ -2735,6 +2950,9 @@ const state = {
   activeSavedSection: null as SavedSectionKey | null,
   lastFormattedOutput: '',
   selectedEPModel: (initialVault.selectedEPModel || 'rhodes') as ElectricPianoModel,
+  barsPerRow: (initialVault.barsPerRow === 1 ? 1 : 2) as 1 | 2,
+  isBeatActive: initialVault.isBeatActive !== undefined ? initialVault.isBeatActive : true,
+  bpm: initialVault.bpm || 80,
   theme: initialVault.theme,
   vaultUpdatedAt: initialVault.updatedAt,
   savedSections: initialVault.savedSections,
@@ -2768,7 +2986,10 @@ function persistVault() {
     theme: state.theme,
     savedSections: state.savedSections,
     baseProgressionsPool: state.baseProgressionsPool,
-    selectedEPModel: state.selectedEPModel
+    selectedEPModel: state.selectedEPModel,
+    barsPerRow: state.barsPerRow,
+    isBeatActive: state.isBeatActive,
+    bpm: state.bpm
   };
 
   try {
@@ -2813,6 +3034,20 @@ async function syncAndHealVault() {
       audioEngine.setModel(state.selectedEPModel);
       updateTransportUI();
     }
+    if (newest.barsPerRow === 1 || newest.barsPerRow === 2) {
+      state.barsPerRow = newest.barsPerRow;
+      updateLayoutToggleUI();
+    }
+    if (newest.isBeatActive !== undefined) {
+      state.isBeatActive = newest.isBeatActive;
+      audioEngine.setBeatActive(state.isBeatActive);
+      updateTransportUI();
+    }
+    if (typeof newest.bpm === 'number' && newest.bpm >= 50 && newest.bpm <= 220) {
+      state.bpm = newest.bpm;
+      audioEngine.setBpm(state.bpm);
+      updateTransportUI();
+    }
     if (!state.userChangedBaseProgression) {
       state.baseProgression = getDefaultBaseProgression();
       const input = document.getElementById('singleProgInput') as HTMLInputElement | null;
@@ -2831,7 +3066,10 @@ async function syncAndHealVault() {
     theme: state.theme,
     savedSections: state.savedSections,
     baseProgressionsPool: state.baseProgressionsPool,
-    selectedEPModel: state.selectedEPModel
+    selectedEPModel: state.selectedEPModel,
+    barsPerRow: state.barsPerRow,
+    isBeatActive: state.isBeatActive,
+    bpm: state.bpm
   };
   try {
     localStorage.setItem(VAULT_LS_KEY, JSON.stringify(currentPayload));
@@ -3140,6 +3378,36 @@ function updateSaveButtonUI() {
   }
 }
 
+function updateLayoutToggleUI() {
+  const btn = document.getElementById('layoutToggleBtn');
+  const icon = document.getElementById('layoutToggleIcon');
+  if (!btn || !icon) return;
+
+  const isOneBar = state.barsPerRow === 1;
+
+  if (isOneBar) {
+    btn.setAttribute('title', 'Current: 1 bar per row (1fr) · Tap to switch to 2 bars (1fr 1fr)');
+    btn.setAttribute('aria-label', 'Switch to two bars per row');
+    btn.className = 'p-2 rounded-[6px] text-sky-600 dark:text-[#38bdf8] bg-sky-50 dark:bg-[#0c4a6e]/40 transition-colors cursor-pointer';
+    icon.innerHTML = `
+      <svg class="w-4 h-4 fill-none stroke-current" viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="4" width="18" height="6.5" rx="1.5" />
+        <rect x="3" y="13.5" width="18" height="6.5" rx="1.5" />
+      </svg>
+    `;
+  } else {
+    btn.setAttribute('title', 'Current: 2 bars per row (1fr 1fr) · Tap to switch to 1 bar (1fr)');
+    btn.setAttribute('aria-label', 'Switch to one bar per row');
+    btn.className = 'p-2 rounded-[6px] text-slate-500 hover:text-sky-600 dark:text-[#38bdf8]/70 dark:hover:text-[#38bdf8] hover:bg-slate-100 dark:hover:bg-[#0c4a6e]/40 transition-colors cursor-pointer';
+    icon.innerHTML = `
+      <svg class="w-4 h-4 fill-none stroke-current" viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="4" width="8" height="16" rx="1.5" />
+        <rect x="13" y="4" width="8" height="16" rx="1.5" />
+      </svg>
+    `;
+  }
+}
+
 function updateReharmSetUI() {
   const techPopover = document.getElementById('reharmTechniquePopover');
   const badge = document.getElementById('reharmIconBadge');
@@ -3242,9 +3510,12 @@ function renderOutput() {
     return mList;
   });
 
+  const chunkSize = state.barsPerRow === 1 ? 1 : 2;
+  const isSingleCol = state.barsPerRow === 1;
+
   const rowsOfMeasures = [];
-  for (let i = 0; i < measureEntries.length; i += 2) {
-    rowsOfMeasures.push(measureEntries.slice(i, i + 2));
+  for (let i = 0; i < measureEntries.length; i += chunkSize) {
+    rowsOfMeasures.push(measureEntries.slice(i, i + chunkSize));
   }
 
   const leadSheetRowsHtml = rowsOfMeasures
@@ -3258,27 +3529,45 @@ function renderOutput() {
           const isVeryDense = !isUltraDense && (chordCount >= 4 || totalChars >= 12);
           const isModerateDense = !isUltraDense && !isVeryDense && (chordCount === 3 || totalChars >= 8);
 
-          const chordSizeCls = isUltraDense
-            ? 'text-[13px] sm:text-[16px]'
-            : isVeryDense
-              ? 'text-[15px] sm:text-[19px]'
-              : isModerateDense
-                ? 'text-[17px] sm:text-[21px]'
-                : 'text-[21px] sm:text-[25px]';
-          const slashSizeCls = isUltraDense
-            ? 'text-[13px] sm:text-[16px]'
-            : isVeryDense
-              ? 'text-[15px] sm:text-[19px]'
-              : isModerateDense
-                ? 'text-[17px] sm:text-[21px]'
-                : 'text-[19px] sm:text-[25px]';
-          const boxPaddingCls = isUltraDense
-            ? 'px-1.5 py-3.5 sm:px-2 sm:py-4 gap-0.5 sm:gap-1'
-            : isVeryDense
-              ? 'px-2 py-3.5 sm:px-2.5 sm:py-4 gap-1 sm:gap-1.5'
-              : isModerateDense
-                ? 'px-2.5 py-3.5 sm:px-3 sm:py-4 gap-1 sm:gap-1.5'
-                : 'px-2.5 py-3.5 sm:px-3.5 sm:py-4 gap-1.5 sm:gap-2';
+          const chordSizeCls = isSingleCol
+            ? (isUltraDense
+                ? 'text-[17px] sm:text-[20px]'
+                : isVeryDense
+                  ? 'text-[19px] sm:text-[23px]'
+                  : isModerateDense
+                    ? 'text-[22px] sm:text-[26px]'
+                    : 'text-[24px] sm:text-[29px]')
+            : (isUltraDense
+                ? 'text-[13px] sm:text-[16px]'
+                : isVeryDense
+                  ? 'text-[15px] sm:text-[19px]'
+                  : isModerateDense
+                    ? 'text-[17px] sm:text-[21px]'
+                    : 'text-[21px] sm:text-[25px]');
+          const slashSizeCls = isSingleCol
+            ? (isUltraDense
+                ? 'text-[17px] sm:text-[20px]'
+                : isVeryDense
+                  ? 'text-[19px] sm:text-[23px]'
+                  : isModerateDense
+                    ? 'text-[22px] sm:text-[26px]'
+                    : 'text-[22px] sm:text-[28px]')
+            : (isUltraDense
+                ? 'text-[13px] sm:text-[16px]'
+                : isVeryDense
+                  ? 'text-[15px] sm:text-[19px]'
+                  : isModerateDense
+                    ? 'text-[17px] sm:text-[21px]'
+                    : 'text-[19px] sm:text-[25px]');
+          const boxPaddingCls = isSingleCol
+            ? 'px-3.5 py-3.5 sm:px-4 sm:py-4 gap-2 sm:gap-3'
+            : (isUltraDense
+                ? 'px-1.5 py-3.5 sm:px-2 sm:py-4 gap-0.5 sm:gap-1'
+                : isVeryDense
+                  ? 'px-2 py-3.5 sm:px-2.5 sm:py-4 gap-1 sm:gap-1.5'
+                  : isModerateDense
+                    ? 'px-2.5 py-3.5 sm:px-3 sm:py-4 gap-1 sm:gap-1.5'
+                    : 'px-2.5 py-3.5 sm:px-3.5 sm:py-4 gap-1.5 sm:gap-2');
 
           const measContent = measTokens
             .map(tok => {
@@ -3286,20 +3575,24 @@ function renderOutput() {
                 return `<span class="text-slate-400 dark:text-[#38bdf8]/60 font-mono-tabular ${slashSizeCls} font-bold select-none shrink-0">/</span>`;
               }
               const formattedName = formatChordHtml(tok.val);
-              return `<span data-chord-token="1" data-measure-idx="${tok.measureIdx}" data-chord-idx="${tok.chordIdx ?? 0}" onclick="window.ReharmEngine.playChordString('${tok.val}', ${tok.beats || 2})" class="${chordSizeCls} font-black font-mono-tabular tracking-tight leading-normal py-0.5 px-[1px] text-slate-900 dark:text-white hover:text-sky-600 dark:hover:text-[#38bdf8] transition-all duration-150 cursor-pointer active:scale-95 select-none inline-block whitespace-nowrap shrink-0">${formattedName}</span>`;
+              return `<span data-chord-token="1" data-measure-idx="${tok.measureIdx}" data-chord-idx="${tok.chordIdx ?? 0}" onclick="event.stopPropagation(); window.ReharmEngine.playChordString('${tok.val}', ${tok.beats || 2})" class="${chordSizeCls} font-black font-mono-tabular tracking-tight leading-normal py-0.5 px-[1px] text-slate-900 dark:text-white hover:text-sky-600 dark:hover:text-[#38bdf8] transition-all duration-150 cursor-pointer active:scale-95 select-none inline-block whitespace-nowrap shrink-0">${formattedName}</span>`;
             })
             .join(' ');
 
           return `
-            <div data-measure-box="${mIdx}" class="relative flex items-center justify-between ${boxPaddingCls} bg-white dark:bg-[#071d2c] border border-slate-300 dark:border-[#0c4a6e] rounded-[10px] shadow-sm w-full min-w-0 box-border text-left transition-all duration-150">
+            <div data-measure-box="${mIdx}" onclick="window.ReharmEngine.togglePlayback()" class="relative flex items-center justify-between ${boxPaddingCls} bg-white dark:bg-[#071d2c] border border-slate-300 dark:border-[#0c4a6e] rounded-[10px] shadow-sm w-full min-w-0 box-border text-left transition-all duration-150 cursor-pointer" title="Click measure to Play / Stop | Click chord to preview">
               ${measContent}
             </div>
           `;
         })
         .join('');
 
+      const gridColsCls = isSingleCol
+        ? 'grid grid-cols-1 w-full min-w-0 box-border'
+        : 'grid grid-cols-2 gap-2 sm:gap-3 w-full min-w-0 box-border';
+
       return `
-        <div class="grid grid-cols-2 gap-2 sm:gap-3 w-full min-w-0 box-border">
+        <div class="${gridColsCls}">
           ${measBoxesHtml}
         </div>
       `;
@@ -3828,6 +4121,66 @@ function setupInteractions() {
   window.addEventListener('pagehide', () => {
     persistVault();
   });
+
+  // Global Keyboard Shortcuts (Space: Play/Stop, T: Cycle Tempo, K: Cycle Keys, B: Toggle Drums, L: Toggle Loop)
+  document.addEventListener('keydown', (e: KeyboardEvent) => {
+    const target = e.target as HTMLElement | null;
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+      return;
+    }
+    if (e.code === 'Space') {
+      e.preventDefault();
+      ReharmEngine.togglePlayback();
+    } else if (e.key === 't' || e.key === 'T') {
+      e.preventDefault();
+      ReharmEngine.cycleBpm();
+    } else if (e.key === 'k' || e.key === 'K') {
+      e.preventDefault();
+      ReharmEngine.cycleEPModel();
+    } else if (e.key === 'b' || e.key === 'B') {
+      e.preventDefault();
+      ReharmEngine.toggleBeat();
+    } else if (e.key === 'l' || e.key === 'L') {
+      e.preventDefault();
+      ReharmEngine.toggleLoop();
+    }
+  });
+}
+
+const BPM_CYCLE_LIST = [60, 70, 80, 90, 100, 110, 120];
+
+let keysHoldTimer: ReturnType<typeof setTimeout> | null = null;
+let keysLongPressed = false;
+
+let drumsHoldTimer: ReturnType<typeof setTimeout> | null = null;
+let drumsLongPressed = false;
+
+function updateUploadButtonStates() {
+  updateTransportButtonActiveStates();
+}
+
+function updateTransportButtonActiveStates() {
+  const epBtn = document.getElementById('epSelectorBtn');
+  const beatBtn = document.getElementById('beatToggleBtn');
+
+  const keysActive = audioEngine.getKeysActive();
+  const drumsActive = audioEngine.getDrumsActive();
+
+  if (epBtn) {
+    if (keysActive) {
+      epBtn.classList.remove('opacity-40');
+    } else {
+      epBtn.classList.add('opacity-40');
+    }
+  }
+
+  if (beatBtn) {
+    if (drumsActive) {
+      beatBtn.classList.remove('opacity-40');
+    } else {
+      beatBtn.classList.add('opacity-40');
+    }
+  }
 }
 
 const ReharmEngine = {
@@ -3839,47 +4192,28 @@ const ReharmEngine = {
     if (state.selectedEPModel) {
       audioEngine.setModel(state.selectedEPModel);
     }
+    if (state.isBeatActive !== undefined) {
+      audioEngine.setBeatActive(state.isBeatActive);
+    }
+    if (state.bpm) {
+      audioEngine.setBpm(state.bpm);
+    }
     state.baseProgression = getDefaultBaseProgression();
     const input = document.getElementById('singleProgInput') as HTMLInputElement | null;
     if (input) input.value = state.baseProgression;
-    const bpmRange = document.getElementById('bpmRangeInput') as HTMLInputElement | null;
-    if (bpmRange && bpmRange.value) {
-      const initialBpm = parseInt(bpmRange.value, 10);
-      if (!isNaN(initialBpm)) {
-        audioEngine.setBpm(initialBpm);
-      }
-    }
     syncDefaultProgressionInputUI();
     updateReharmSetUI();
     updateMeterBadgeUI();
     updateTransportUI(false);
     updateEPPopoverUI();
+    updateLayoutToggleUI();
     setupInteractions();
     setupPWAInstallUI();
     renderOutput();
     renderSavedProgressionsList();
     syncAndHealVault();
+    updateUploadButtonStates();
     audioEngine.prefetch();
-  },
-
-  cycleEPModel() {
-    const nextModel = audioEngine.cycleModel();
-    state.selectedEPModel = nextModel;
-    updateTransportUI();
-    updateEPPopoverUI();
-    persistVault();
-  },
-
-  selectEPModel(model: ElectricPianoModel) {
-    if (EP_MODELS[model]) {
-      audioEngine.setModel(model);
-      state.selectedEPModel = model;
-      updateTransportUI();
-      updateEPPopoverUI();
-      const popover = document.getElementById('epPopover');
-      if (popover) popover.classList.add('hidden');
-      persistVault();
-    }
   },
 
   toggleEPPopover(e?: Event) {
@@ -3908,21 +4242,21 @@ const ReharmEngine = {
     });
   },
 
-  toggleBpmPopover(e?: Event) {
-    if (e) e.stopPropagation();
-    const pop = document.getElementById('bpmPopover');
-    if (pop) {
-      updateTransportUI();
-      pop.classList.toggle('hidden');
+  cycleBpm() {
+    const current = audioEngine.getBpm();
+    const idx = BPM_CYCLE_LIST.indexOf(current);
+    let nextBpm: number;
+    if (idx === -1) {
+      const nextVal = BPM_CYCLE_LIST.find(b => b > current);
+      nextBpm = nextVal !== undefined ? nextVal : BPM_CYCLE_LIST[0];
+    } else {
+      nextBpm = BPM_CYCLE_LIST[(idx + 1) % BPM_CYCLE_LIST.length];
     }
-  },
-
-  setBpm(val: string | number) {
-    const num = typeof val === 'number' ? val : parseInt(val, 10);
-    if (!isNaN(num)) {
-      audioEngine.setBpm(num);
-      updateTransportUI();
-    }
+    audioEngine.setBpm(nextBpm);
+    state.bpm = nextBpm;
+    updateTransportUI();
+    persistVault();
+    return nextBpm;
   },
 
   toggleLoop() {
@@ -3930,30 +4264,285 @@ const ReharmEngine = {
     updateTransportUI();
   },
 
-  async triggerPWAInstall() {
-    if (deferredInstallPrompt) {
-      await deferredInstallPrompt.prompt();
-      const { outcome } = await deferredInstallPrompt.userChoice;
-      if (outcome === 'accepted') {
-        deferredInstallPrompt = null;
-        const btn = document.getElementById('pwaInstallBtn');
-        if (btn) btn.classList.add('hidden');
-      }
-      return;
-    }
-    const iosModal = document.getElementById('iosInstallModal');
-    if (iosModal) iosModal.classList.remove('hidden');
+  toggleAudioModal() {},
+
+  startKeysPressHold() {
+    keysLongPressed = false;
+    keysHoldTimer = setTimeout(() => {
+      keysLongPressed = true;
+      ReharmEngine.openKeysModal();
+    }, 500);
   },
 
-  closeIOSInstallModal() {
-    const iosModal = document.getElementById('iosInstallModal');
-    if (iosModal) iosModal.classList.add('hidden');
+  endKeysPressHold() {
+    if (keysHoldTimer) {
+      clearTimeout(keysHoldTimer);
+      keysHoldTimer = null;
+    }
+    if (!keysLongPressed) {
+      audioEngine.toggleKeysActive();
+      updateTransportButtonActiveStates();
+    }
+    keysLongPressed = false;
+  },
+
+  cancelKeysPressHold() {
+    if (keysHoldTimer) {
+      clearTimeout(keysHoldTimer);
+      keysHoldTimer = null;
+    }
+    keysLongPressed = false;
+  },
+
+  openKeysModal() {
+    const modal = document.getElementById('keysSettingsModal');
+    if (modal) {
+      modal.classList.remove('hidden');
+      ReharmEngine.syncKeysModalUI();
+    }
+  },
+
+  closeKeysModal() {
+    const modal = document.getElementById('keysSettingsModal');
+    if (modal) modal.classList.add('hidden');
+  },
+
+  syncKeysModalUI() {
+    const fileList = document.getElementById('keysModalFileList');
+    const keyName = audioEngine.getSoundFontName() || audioEngine.getCustomInstrumentName();
+    if (fileList) {
+      if (keyName) {
+        fileList.innerHTML = `
+          <div class="flex items-center justify-between bg-slate-100 dark:bg-[#030d17] px-2 py-1 rounded text-[11px] font-mono">
+            <span class="truncate text-slate-700 dark:text-slate-200">${keyName}</span>
+            <button type="button" onclick="window.ReharmEngine.deleteKeysFile()" class="text-rose-500 hover:text-rose-700 font-bold px-1 cursor-pointer">×</button>
+          </div>
+        `;
+      } else {
+        fileList.innerHTML = `<span class="text-[11px] text-slate-400 dark:text-slate-500">No file uploaded</span>`;
+      }
+    }
+
+    const lowSlider = document.getElementById('keysLowSlider') as HTMLInputElement;
+    const highSlider = document.getElementById('keysHighSlider') as HTMLInputElement;
+    const gainSlider = document.getElementById('keysGainSlider') as HTMLInputElement;
+
+    const lowVal = audioEngine.getKeysLowEq();
+    const highVal = audioEngine.getKeysHighEq();
+    const gainVal = audioEngine.getKeysGain();
+
+    if (lowSlider) lowSlider.value = String(lowVal);
+    if (highSlider) highSlider.value = String(highVal);
+    if (gainSlider) gainSlider.value = String(gainVal);
+
+    const lowValSpan = document.getElementById('keysLowVal');
+    const highValSpan = document.getElementById('keysHighVal');
+    const gainValSpan = document.getElementById('keysGainVal');
+
+    if (lowValSpan) lowValSpan.textContent = `${lowVal > 0 ? '+' : ''}${lowVal} dB`;
+    if (highValSpan) highValSpan.textContent = `${highVal > 0 ? '+' : ''}${highVal} dB`;
+    if (gainValSpan) gainValSpan.textContent = `${gainVal.toFixed(2)}x`;
+  },
+
+  async handleKeysUpload(e: Event) {
+    const input = e.target as HTMLInputElement;
+    if (!input.files || input.files.length === 0) return;
+    const file = input.files[0];
+    const isSf2 = file.name.toLowerCase().endsWith('.sf2') || file.type.includes('soundfont');
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      if (isSf2) {
+        await audioEngine.loadSoundFont(arrayBuffer, file.name);
+      } else {
+        await audioEngine.loadCustomInstrumentSample(arrayBuffer, file.name);
+      }
+      ReharmEngine.syncKeysModalUI();
+      updateUploadButtonStates();
+    } catch (err) {
+      console.error('Failed to load keys file:', err);
+    }
+  },
+
+  deleteKeysFile() {
+    audioEngine.clearSoundFont();
+    audioEngine.clearCustomInstrument();
+    const input = document.getElementById('keysFileInput') as HTMLInputElement;
+    if (input) input.value = '';
+    ReharmEngine.syncKeysModalUI();
+    updateUploadButtonStates();
+  },
+
+  updateKeysLow(val: string) {
+    const num = parseFloat(val);
+    if (!isNaN(num)) {
+      audioEngine.setKeysLowEq(num);
+      const span = document.getElementById('keysLowVal');
+      if (span) span.textContent = `${num > 0 ? '+' : ''}${num} dB`;
+    }
+  },
+
+  updateKeysHigh(val: string) {
+    const num = parseFloat(val);
+    if (!isNaN(num)) {
+      audioEngine.setKeysHighEq(num);
+      const span = document.getElementById('keysHighVal');
+      if (span) span.textContent = `${num > 0 ? '+' : ''}${num} dB`;
+    }
+  },
+
+  updateKeysGain(val: string) {
+    const num = parseFloat(val);
+    if (!isNaN(num)) {
+      audioEngine.setKeysGain(num);
+      const span = document.getElementById('keysGainVal');
+      if (span) span.textContent = `${num.toFixed(2)}x`;
+    }
+  },
+
+  startDrumsPressHold() {
+    drumsLongPressed = false;
+    drumsHoldTimer = setTimeout(() => {
+      drumsLongPressed = true;
+      ReharmEngine.openDrumsModal();
+    }, 500);
+  },
+
+  endDrumsPressHold() {
+    if (drumsHoldTimer) {
+      clearTimeout(drumsHoldTimer);
+      drumsHoldTimer = null;
+    }
+    if (!drumsLongPressed) {
+      audioEngine.toggleDrumsActive();
+      updateTransportButtonActiveStates();
+    }
+    drumsLongPressed = false;
+  },
+
+  cancelDrumsPressHold() {
+    if (drumsHoldTimer) {
+      clearTimeout(drumsHoldTimer);
+      drumsHoldTimer = null;
+    }
+    drumsLongPressed = false;
+  },
+
+  openDrumsModal() {
+    const modal = document.getElementById('drumsSettingsModal');
+    if (modal) {
+      modal.classList.remove('hidden');
+      ReharmEngine.syncDrumsModalUI();
+    }
+  },
+
+  closeDrumsModal() {
+    const modal = document.getElementById('drumsSettingsModal');
+    if (modal) modal.classList.add('hidden');
+  },
+
+  syncDrumsModalUI() {
+    const fileList = document.getElementById('drumsModalFileList');
+    const drumName = audioEngine.getCustomDrumLoopName();
+    if (fileList) {
+      if (drumName) {
+        fileList.innerHTML = `
+          <div class="flex items-center justify-between bg-slate-100 dark:bg-[#030d17] px-2 py-1 rounded text-[11px] font-mono">
+            <span class="truncate text-slate-700 dark:text-slate-200">${drumName}</span>
+            <button type="button" onclick="window.ReharmEngine.deleteDrumsFile()" class="text-rose-500 hover:text-rose-700 font-bold px-1 cursor-pointer">×</button>
+          </div>
+        `;
+      } else {
+        fileList.innerHTML = `<span class="text-[11px] text-slate-400 dark:text-slate-500">No file uploaded</span>`;
+      }
+    }
+
+    const bpmInput = document.getElementById('drumsBaseBpmInput') as HTMLInputElement;
+    if (bpmInput) bpmInput.value = String(audioEngine.getCustomDrumLoopBaseBpm());
+
+    const lowSlider = document.getElementById('drumsLowSlider') as HTMLInputElement;
+    const highSlider = document.getElementById('drumsHighSlider') as HTMLInputElement;
+    const gainSlider = document.getElementById('drumsGainSlider') as HTMLInputElement;
+
+    const lowVal = audioEngine.getDrumsLowEq();
+    const highVal = audioEngine.getDrumsHighEq();
+    const gainVal = audioEngine.getDrumsGain();
+
+    if (lowSlider) lowSlider.value = String(lowVal);
+    if (highSlider) highSlider.value = String(highVal);
+    if (gainSlider) gainSlider.value = String(gainVal);
+
+    const lowValSpan = document.getElementById('drumsLowVal');
+    const highValSpan = document.getElementById('drumsHighVal');
+    const gainValSpan = document.getElementById('drumsGainVal');
+
+    if (lowValSpan) lowValSpan.textContent = `${lowVal > 0 ? '+' : ''}${lowVal} dB`;
+    if (highValSpan) highValSpan.textContent = `${highVal > 0 ? '+' : ''}${highVal} dB`;
+    if (gainValSpan) gainValSpan.textContent = `${gainVal.toFixed(2)}x`;
+  },
+
+  async handleDrumsUpload(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const baseBpmInput = document.getElementById('drumsBaseBpmInput') as HTMLInputElement;
+    if (!input.files || input.files.length === 0) return;
+    const file = input.files[0];
+    const baseBpm = baseBpmInput ? parseInt(baseBpmInput.value, 10) || 120 : 120;
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      await audioEngine.loadCustomDrumLoop(arrayBuffer, baseBpm, file.name);
+      ReharmEngine.syncDrumsModalUI();
+      updateUploadButtonStates();
+    } catch (err) {
+      console.error('Failed to load drum loop:', err);
+    }
+  },
+
+  deleteDrumsFile() {
+    audioEngine.clearCustomDrumLoop();
+    const input = document.getElementById('drumsFileInput') as HTMLInputElement;
+    if (input) input.value = '';
+    ReharmEngine.syncDrumsModalUI();
+    updateUploadButtonStates();
+  },
+
+  updateDrumsBaseBpm(val: string | number) {
+    const num = typeof val === 'number' ? val : parseInt(val, 10);
+    if (!isNaN(num)) {
+      audioEngine.setCustomDrumLoopBaseBpm(num);
+    }
+  },
+
+  updateDrumsLow(val: string) {
+    const num = parseFloat(val);
+    if (!isNaN(num)) {
+      audioEngine.setDrumsLowEq(num);
+      const span = document.getElementById('drumsLowVal');
+      if (span) span.textContent = `${num > 0 ? '+' : ''}${num} dB`;
+    }
+  },
+
+  updateDrumsHigh(val: string) {
+    const num = parseFloat(val);
+    if (!isNaN(num)) {
+      audioEngine.setDrumsHighEq(num);
+      const span = document.getElementById('drumsHighVal');
+      if (span) span.textContent = `${num > 0 ? '+' : ''}${num} dB`;
+    }
+  },
+
+  updateDrumsGain(val: string) {
+    const num = parseFloat(val);
+    if (!isNaN(num)) {
+      audioEngine.setDrumsGain(num);
+      const span = document.getElementById('drumsGainVal');
+      if (span) span.textContent = `${num.toFixed(2)}x`;
+    }
   },
 
   switchScreen(screenName: 'generator' | 'saved') {
     state.currentScreen = screenName === 'saved' ? 'saved' : 'generator';
     const track = document.getElementById('screenTrack');
     const saveBtn = document.getElementById('saveCurrentProgBtn');
+    const layoutBtn = document.getElementById('layoutToggleBtn');
 
     if (state.currentScreen === 'saved') {
       if (audioEngine.getIsPlaying()) {
@@ -3966,6 +4555,7 @@ const ReharmEngine = {
         track.classList.add('-translate-x-1/2');
       }
       if (saveBtn) saveBtn.classList.add('invisible');
+      if (layoutBtn) layoutBtn.classList.add('invisible');
       renderSavedProgressionsList();
     } else {
       if (track) {
@@ -3973,6 +4563,7 @@ const ReharmEngine = {
         track.classList.add('translate-x-0');
       }
       if (saveBtn) saveBtn.classList.remove('invisible');
+      if (layoutBtn) layoutBtn.classList.remove('invisible');
       renderOutput();
     }
   },
@@ -4480,6 +5071,13 @@ const ReharmEngine = {
     if (!chordStr) return;
     const chord = chordStr.split('→')[0].trim();
     audioEngine.playSingleChord(chord, beats, state.meter);
+  },
+
+  toggleLayoutColumns() {
+    state.barsPerRow = state.barsPerRow === 1 ? 2 : 1;
+    updateLayoutToggleUI();
+    renderOutput();
+    persistVault();
   },
 
   toggleTheme() {
