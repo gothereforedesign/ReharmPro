@@ -104,11 +104,11 @@
                 <!-- 2. KEYS BUTTON -->
                 <div class="relative w-full flex">
                   <button id="epSelectorBtn" type="button"
-                    onmousedown="window.ReharmEngine.startKeysPressHold()"
-                    onmouseup="window.ReharmEngine.endKeysPressHold()"
+                    onmousedown="window.ReharmEngine.startKeysPressHold(event)"
+                    onmouseup="window.ReharmEngine.endKeysPressHold(event)"
                     onmouseleave="window.ReharmEngine.cancelKeysPressHold()"
-                    onttouchstart="window.ReharmEngine.startKeysPressHold()"
-                    ontouchend="window.ReharmEngine.endKeysPressHold()"
+                    ontouchstart="window.ReharmEngine.startKeysPressHold(event)"
+                    ontouchend="window.ReharmEngine.endKeysPressHold(event)"
                     ontouchcancel="window.ReharmEngine.cancelKeysPressHold()"
                     oncontextmenu="event.preventDefault()"
                     class="w-full py-2.5 px-1 sm:px-2 text-sky-600 dark:text-[#38bdf8] hover:bg-slate-100 dark:hover:bg-[#0c4a6e]/40 cursor-pointer active:scale-95 transition-all flex items-center justify-center gap-1 select-none" title="Tap: Mute/Unmute | Hold 0.5s: Settings">
@@ -116,17 +116,17 @@
                       <rect width="18" height="12" x="3" y="6" rx="2"/>
                       <path d="M7 6v6M11 6v6M15 6v6"/>
                     </svg>
-                    <span id="epBadgeText" class="font-mono-tabular font-black text-[11px] sm:text-[12px] tracking-tight uppercase truncate">Rhodes</span>
+                    <span id="epBadgeText" class="font-mono-tabular font-black text-[11px] sm:text-[12px] tracking-tight uppercase truncate">KEYS</span>
                   </button>
                 </div>
 
                 <!-- 3. DRUMS BUTTON -->
                 <button id="beatToggleBtn" type="button"
-                  onmousedown="window.ReharmEngine.startDrumsPressHold()"
-                  onmouseup="window.ReharmEngine.endDrumsPressHold()"
+                  onmousedown="window.ReharmEngine.startDrumsPressHold(event)"
+                  onmouseup="window.ReharmEngine.endDrumsPressHold(event)"
                   onmouseleave="window.ReharmEngine.cancelDrumsPressHold()"
-                  onttouchstart="window.ReharmEngine.startDrumsPressHold()"
-                  ontouchend="window.ReharmEngine.endDrumsPressHold()"
+                  ontouchstart="window.ReharmEngine.startDrumsPressHold(event)"
+                  ontouchend="window.ReharmEngine.endDrumsPressHold(event)"
                   ontouchcancel="window.ReharmEngine.cancelDrumsPressHold()"
                   oncontextmenu="event.preventDefault()"
                   class="w-full py-2.5 px-1 sm:px-2 cursor-pointer active:scale-95 transition-all flex items-center justify-center gap-1 select-none text-sky-600 dark:text-[#38bdf8] bg-sky-500/10 dark:bg-[#0c4a6e]/60" title="Tap: Mute/Unmute | Hold 0.5s: Settings">
@@ -247,99 +247,101 @@
 
     <!-- KEYS SETTINGS MODAL -->
     <div id="keysSettingsModal" onclick="if(event.target === this) window.ReharmEngine.closeKeysModal()" class="fixed inset-0 z-50 bg-slate-900/50 dark:bg-slate-950/75 backdrop-blur-md flex items-center justify-center p-4 hidden">
-      <div class="bg-white dark:bg-[#071d2c] border border-slate-300 dark:border-[#38bdf8]/40 rounded-[16px] shadow-2xl max-w-sm w-full p-4 flex flex-col gap-3 text-slate-900 dark:text-[#f8fafc]">
-        <div class="flex items-center justify-between border-b border-slate-200 dark:border-[#0c4a6e]/60 pb-2">
-          <h3 class="font-bold text-sm tracking-tight">Keys</h3>
-          <button type="button" onclick="window.ReharmEngine.closeKeysModal()" class="p-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer">×</button>
+      <div class="bg-white dark:bg-[#071d2c] border border-slate-300 dark:border-[#38bdf8]/40 rounded-[14px] shadow-2xl max-w-xs w-full p-4 flex flex-col gap-3 text-slate-900 dark:text-[#f8fafc]">
+        <div class="flex items-center justify-between border-b border-slate-200 dark:border-[#0c4a6e]/60 pb-1.5">
+          <span class="font-bold text-xs tracking-wider uppercase text-slate-600 dark:text-slate-300">Keys</span>
+          <button type="button" onclick="window.ReharmEngine.closeKeysModal()" class="text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer text-base leading-none px-1">×</button>
         </div>
 
-        <div class="flex flex-col gap-1.5">
-          <label class="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-[#38bdf8]/80">File (.sf2, WAV)</label>
-          <input type="file" id="keysFileInput" accept="audio/*,.sf2" class="text-xs file:mr-2 file:py-1 file:px-2.5 file:rounded file:border-0 file:text-[11px] file:font-semibold file:bg-sky-500 file:text-white dark:file:bg-[#0c4a6e] dark:file:text-[#38bdf8] cursor-pointer w-full" onchange="window.ReharmEngine.handleKeysUpload(event)" />
-          <div id="keysModalFileList" class="flex flex-col gap-1 text-xs">
-            <span class="text-[11px] text-slate-400 dark:text-slate-500">No file uploaded</span>
-          </div>
+        <!-- 4 Distinct Built-in Keys Models -->
+        <div class="grid grid-cols-4 gap-1">
+          <button type="button" id="modelBtnRhodes" onclick="window.ReharmEngine.selectEPModel('rhodes')" class="py-1 px-1 rounded text-[10px] font-mono font-bold text-center border border-slate-200 dark:border-[#0c4a6e] hover:border-sky-500 cursor-pointer">Rhodes</button>
+          <button type="button" id="modelBtnWurli" onclick="window.ReharmEngine.selectEPModel('wurlitzer')" class="py-1 px-1 rounded text-[10px] font-mono font-bold text-center border border-slate-200 dark:border-[#0c4a6e] hover:border-sky-500 cursor-pointer">Wurli</button>
+          <button type="button" id="modelBtnDx7" onclick="window.ReharmEngine.selectEPModel('dx7')" class="py-1 px-1 rounded text-[10px] font-mono font-bold text-center border border-slate-200 dark:border-[#0c4a6e] hover:border-sky-500 cursor-pointer">DX7</button>
+          <button type="button" id="modelBtnClav" onclick="window.ReharmEngine.selectEPModel('clavinet')" class="py-1 px-1 rounded text-[10px] font-mono font-bold text-center border border-slate-200 dark:border-[#0c4a6e] hover:border-sky-500 cursor-pointer">Clav</button>
         </div>
 
-        <div class="flex flex-col gap-2 pt-2 border-t border-slate-200 dark:border-[#0c4a6e]/60">
-          <div class="flex flex-col gap-1">
-            <div class="flex justify-between text-[11px] font-mono">
-              <span>Low Freq (Bass)</span>
-              <span id="keysLowVal">0 dB</span>
-            </div>
-            <input type="range" id="keysLowSlider" min="-15" max="15" step="1" value="0" class="w-full accent-sky-500 cursor-pointer" oninput="window.ReharmEngine.updateKeysLow(this.value)" />
+        <!-- High Frequency Slider -->
+        <div class="flex flex-col gap-1 pt-1.5 border-t border-slate-200 dark:border-[#0c4a6e]/60">
+          <div class="flex justify-between text-[11px] font-mono">
+            <span>High</span>
+            <span id="keysHighVal">0 dB</span>
           </div>
-
-          <div class="flex flex-col gap-1">
-            <div class="flex justify-between text-[11px] font-mono">
-              <span>High Freq (Treble)</span>
-              <span id="keysHighVal">0 dB</span>
-            </div>
-            <input type="range" id="keysHighSlider" min="-15" max="15" step="1" value="0" class="w-full accent-sky-500 cursor-pointer" oninput="window.ReharmEngine.updateKeysHigh(this.value)" />
-          </div>
-
-          <div class="flex flex-col gap-1">
-            <div class="flex justify-between text-[11px] font-mono">
-              <span>Gain / Volume</span>
-              <span id="keysGainVal">1.0x</span>
-            </div>
-            <input type="range" id="keysGainSlider" min="0" max="2" step="0.05" value="1.0" class="w-full accent-sky-500 cursor-pointer" oninput="window.ReharmEngine.updateKeysGain(this.value)" />
-          </div>
+          <input type="range" id="keysHighSlider" min="-15" max="15" step="1" value="0" class="w-full accent-sky-500 cursor-pointer" oninput="window.ReharmEngine.updateKeysHigh(this.value)" />
         </div>
 
-        <div class="flex justify-end pt-2 border-t border-slate-200 dark:border-[#0c4a6e]/60">
-          <button type="button" onclick="window.ReharmEngine.closeKeysModal()" class="px-3 py-1.5 bg-sky-600 hover:bg-sky-700 dark:bg-[#0c4a6e] text-white rounded text-xs font-bold cursor-pointer">Done</button>
+        <!-- Low Frequency Slider -->
+        <div class="flex flex-col gap-1">
+          <div class="flex justify-between text-[11px] font-mono">
+            <span>Low</span>
+            <span id="keysLowVal">0 dB</span>
+          </div>
+          <input type="range" id="keysLowSlider" min="-15" max="15" step="1" value="0" class="w-full accent-sky-500 cursor-pointer" oninput="window.ReharmEngine.updateKeysLow(this.value)" />
+        </div>
+
+        <!-- Gain Slider -->
+        <div class="flex flex-col gap-1">
+          <div class="flex justify-between text-[11px] font-mono">
+            <span>Gain</span>
+            <span id="keysGainVal">1.0x</span>
+          </div>
+          <input type="range" id="keysGainSlider" min="0" max="2" step="0.05" value="1.0" class="w-full accent-sky-500 cursor-pointer" oninput="window.ReharmEngine.updateKeysGain(this.value)" />
+        </div>
+
+        <div class="flex justify-end pt-1">
+          <button type="button" onclick="window.ReharmEngine.closeKeysModal()" class="px-3 py-1 bg-sky-600 hover:bg-sky-700 dark:bg-[#0c4a6e] text-white rounded text-xs font-bold cursor-pointer">Done</button>
         </div>
       </div>
     </div>
 
     <!-- DRUMS SETTINGS MODAL -->
     <div id="drumsSettingsModal" onclick="if(event.target === this) window.ReharmEngine.closeDrumsModal()" class="fixed inset-0 z-50 bg-slate-900/50 dark:bg-slate-950/75 backdrop-blur-md flex items-center justify-center p-4 hidden">
-      <div class="bg-white dark:bg-[#071d2c] border border-slate-300 dark:border-[#38bdf8]/40 rounded-[16px] shadow-2xl max-w-sm w-full p-4 flex flex-col gap-3 text-slate-900 dark:text-[#f8fafc]">
-        <div class="flex items-center justify-between border-b border-slate-200 dark:border-[#0c4a6e]/60 pb-2">
-          <h3 class="font-bold text-sm tracking-tight">Drums</h3>
-          <button type="button" onclick="window.ReharmEngine.closeDrumsModal()" class="p-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer">×</button>
+      <div class="bg-white dark:bg-[#071d2c] border border-slate-300 dark:border-[#38bdf8]/40 rounded-[14px] shadow-2xl max-w-xs w-full p-4 flex flex-col gap-3 text-slate-900 dark:text-[#f8fafc]">
+        <div class="flex items-center justify-between border-b border-slate-200 dark:border-[#0c4a6e]/60 pb-1.5">
+          <span class="font-bold text-xs tracking-wider uppercase text-slate-600 dark:text-slate-300">Drums</span>
+          <button type="button" onclick="window.ReharmEngine.closeDrumsModal()" class="text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer text-base leading-none px-1">×</button>
         </div>
 
+        <!-- 1. Upload & Loops List -->
         <div class="flex flex-col gap-1.5">
-          <label class="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-[#38bdf8]/80">Loop & Base BPM</label>
           <div class="flex items-center gap-2">
-            <input type="file" id="drumsFileInput" accept="audio/*" class="text-xs file:mr-2 file:py-1 file:px-2.5 file:rounded file:border-0 file:text-[11px] file:font-semibold file:bg-sky-500 file:text-white dark:file:bg-[#0c4a6e] dark:file:text-[#38bdf8] cursor-pointer flex-1" onchange="window.ReharmEngine.handleDrumsUpload(event)" />
-            <input type="number" id="drumsBaseBpmInput" value="120" min="40" max="240" class="w-14 px-1.5 py-1 bg-slate-100 dark:bg-[#030d17] border border-slate-300 dark:border-[#0c4a6e] rounded text-xs font-mono font-bold text-center" title="Base BPM" onchange="window.ReharmEngine.updateDrumsBaseBpm(this.value)" />
+            <input type="file" id="drumsFileInput" accept="audio/*" multiple class="text-[11px] file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[10px] file:font-semibold file:bg-sky-500 file:text-white dark:file:bg-[#0c4a6e] dark:file:text-[#38bdf8] cursor-pointer flex-1" onchange="window.ReharmEngine.handleDrumsUpload(event)" />
+            <input type="number" id="drumsBaseBpmInput" value="120" min="40" max="240" class="w-12 px-1 py-0.5 bg-slate-100 dark:bg-[#030d17] border border-slate-300 dark:border-[#0c4a6e] rounded text-xs font-mono font-bold text-center" title="BPM" onchange="window.ReharmEngine.updateDrumsBaseBpm(this.value)" />
           </div>
-          <div id="drumsModalFileList" class="flex flex-col gap-1 text-xs">
-            <span class="text-[11px] text-slate-400 dark:text-slate-500">No file uploaded</span>
-          </div>
-        </div>
-
-        <div class="flex flex-col gap-2 pt-2 border-t border-slate-200 dark:border-[#0c4a6e]/60">
-          <div class="flex flex-col gap-1">
-            <div class="flex justify-between text-[11px] font-mono">
-              <span>Low Freq (Bass)</span>
-              <span id="drumsLowVal">0 dB</span>
-            </div>
-            <input type="range" id="drumsLowSlider" min="-15" max="15" step="1" value="0" class="w-full accent-sky-500 cursor-pointer" oninput="window.ReharmEngine.updateDrumsLow(this.value)" />
-          </div>
-
-          <div class="flex flex-col gap-1">
-            <div class="flex justify-between text-[11px] font-mono">
-              <span>High Freq (Treble)</span>
-              <span id="drumsHighVal">0 dB</span>
-            </div>
-            <input type="range" id="drumsHighSlider" min="-15" max="15" step="1" value="0" class="w-full accent-sky-500 cursor-pointer" oninput="window.ReharmEngine.updateDrumsHigh(this.value)" />
-          </div>
-
-          <div class="flex flex-col gap-1">
-            <div class="flex justify-between text-[11px] font-mono">
-              <span>Gain / Volume</span>
-              <span id="drumsGainVal">1.0x</span>
-            </div>
-            <input type="range" id="drumsGainSlider" min="0" max="2" step="0.05" value="1.0" class="w-full accent-sky-500 cursor-pointer" oninput="window.ReharmEngine.updateDrumsGain(this.value)" />
+          <div id="drumsModalFileList" class="flex flex-col gap-1 max-h-28 overflow-y-auto text-[11px]">
+            <span class="text-slate-400 dark:text-slate-500">None</span>
           </div>
         </div>
 
-        <div class="flex justify-end pt-2 border-t border-slate-200 dark:border-[#0c4a6e]/60">
-          <button type="button" onclick="window.ReharmEngine.closeDrumsModal()" class="px-3 py-1.5 bg-sky-600 hover:bg-sky-700 dark:bg-[#0c4a6e] text-white rounded text-xs font-bold cursor-pointer">Done</button>
+        <!-- 2. High Frequency Slider -->
+        <div class="flex flex-col gap-1 pt-1.5 border-t border-slate-200 dark:border-[#0c4a6e]/60">
+          <div class="flex justify-between text-[11px] font-mono">
+            <span>High</span>
+            <span id="drumsHighVal">0 dB</span>
+          </div>
+          <input type="range" id="drumsHighSlider" min="-15" max="15" step="1" value="0" class="w-full accent-sky-500 cursor-pointer" oninput="window.ReharmEngine.updateDrumsHigh(this.value)" />
+        </div>
+
+        <!-- 3. Low Frequency Slider -->
+        <div class="flex flex-col gap-1">
+          <div class="flex justify-between text-[11px] font-mono">
+            <span>Low</span>
+            <span id="drumsLowVal">0 dB</span>
+          </div>
+          <input type="range" id="drumsLowSlider" min="-15" max="15" step="1" value="0" class="w-full accent-sky-500 cursor-pointer" oninput="window.ReharmEngine.updateDrumsLow(this.value)" />
+        </div>
+
+        <!-- 4. Gain Slider -->
+        <div class="flex flex-col gap-1">
+          <div class="flex justify-between text-[11px] font-mono">
+            <span>Gain</span>
+            <span id="drumsGainVal">1.0x</span>
+          </div>
+          <input type="range" id="drumsGainSlider" min="0" max="2" step="0.05" value="1.0" class="w-full accent-sky-500 cursor-pointer" oninput="window.ReharmEngine.updateDrumsGain(this.value)" />
+        </div>
+
+        <div class="flex justify-end pt-1">
+          <button type="button" onclick="window.ReharmEngine.closeDrumsModal()" class="px-3 py-1 bg-sky-600 hover:bg-sky-700 dark:bg-[#0c4a6e] text-white rounded text-xs font-bold cursor-pointer">Done</button>
         </div>
       </div>
     </div>

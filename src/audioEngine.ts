@@ -473,6 +473,13 @@ function makeTapeSaturationCurve(samples = 1024, drive = 1.35): Float32Array {
   return curve;
 }
 
+export interface DrumLoopRecord {
+  id: string;
+  name: string;
+  buffer: AudioBuffer;
+  baseBpm: number;
+}
+
 export class ChordAudioEngine {
   private ctx: AudioContext | null = null;
   private masterInput: GainNode | null = null;
@@ -489,6 +496,8 @@ export class ChordAudioEngine {
   private soundFont: SoundFont2 | null = null;
   private customDrumLoopBuffer: AudioBuffer | null = null;
   private customDrumLoopBaseBpm = 120;
+  private drumLoops: DrumLoopRecord[] = [];
+  private activeDrumLoopIndex = 0;
 
   private soundFontName: string | null = null;
   private customInstrumentName: string | null = null;
@@ -498,16 +507,22 @@ export class ChordAudioEngine {
   private keysHighEq: BiquadFilterNode | null = null;
   private keysGainNode: GainNode | null = null;
   private isKeysActive = true;
+  private keysGainValue = 1.0;
+  private keysLowEqValue = 0;
+  private keysHighEqValue = 0;
 
   private drumsLowEq: BiquadFilterNode | null = null;
   private drumsHighEq: BiquadFilterNode | null = null;
   private drumsGainNode: GainNode | null = null;
   private isDrumsActive = true;
+  private drumsGainValue = 1.0;
+  private drumsLowEqValue = 0;
+  private drumsHighEqValue = 0;
 
   public setKeysActive(active: boolean) {
     this.isKeysActive = active;
     if (this.ctx && this.keysGainNode) {
-      const target = this.isKeysActive ? 1.0 : 0;
+      const target = this.isKeysActive ? this.keysGainValue : 0;
       this.keysGainNode.gain.cancelScheduledValues(this.ctx.currentTime);
       this.keysGainNode.gain.setTargetAtTime(target, this.ctx.currentTime, 0.02);
     }
@@ -526,7 +541,7 @@ export class ChordAudioEngine {
   public setDrumsActive(active: boolean) {
     this.isDrumsActive = active;
     if (this.ctx && this.drumsGainNode) {
-      const target = this.isDrumsActive ? 1.0 : 0;
+      const target = this.isDrumsActive ? this.drumsGainValue : 0;
       this.drumsGainNode.gain.cancelScheduledValues(this.ctx.currentTime);
       this.drumsGainNode.gain.setTargetAtTime(target, this.ctx.currentTime, 0.02);
     }
@@ -543,65 +558,73 @@ export class ChordAudioEngine {
   }
 
   public setKeysLowEq(db: number) {
+    this.keysLowEqValue = Math.max(-15, Math.min(15, db));
     if (this.ctx && this.keysLowEq) {
-      this.keysLowEq.gain.setValueAtTime(Math.max(-15, Math.min(15, db)), this.ctx.currentTime);
+      this.keysLowEq.gain.setValueAtTime(this.keysLowEqValue, this.ctx.currentTime);
     }
   }
 
   public getKeysLowEq(): number {
-    return this.keysLowEq?.gain.value || 0;
+    return this.keysLowEqValue;
   }
 
   public setKeysHighEq(db: number) {
+    this.keysHighEqValue = Math.max(-15, Math.min(15, db));
     if (this.ctx && this.keysHighEq) {
-      this.keysHighEq.gain.setValueAtTime(Math.max(-15, Math.min(15, db)), this.ctx.currentTime);
+      this.keysHighEq.gain.setValueAtTime(this.keysHighEqValue, this.ctx.currentTime);
     }
   }
 
   public getKeysHighEq(): number {
-    return this.keysHighEq?.gain.value || 0;
+    return this.keysHighEqValue;
   }
 
   public setKeysGain(gain: number) {
+    this.keysGainValue = Math.max(0, Math.min(2.0, gain));
     if (this.ctx && this.keysGainNode) {
-      const activeMult = this.isKeysActive ? 1.0 : 0;
-      this.keysGainNode.gain.setValueAtTime(Math.max(0, Math.min(2.0, gain)) * activeMult, this.ctx.currentTime);
+      const target = this.isKeysActive ? this.keysGainValue : 0;
+      this.keysGainNode.gain.cancelScheduledValues(this.ctx.currentTime);
+      this.keysGainNode.gain.setTargetAtTime(target, this.ctx.currentTime, 0.02);
     }
   }
 
   public getKeysGain(): number {
-    return this.keysGainNode?.gain.value || 1.0;
+    return this.keysGainValue;
   }
 
   public setDrumsLowEq(db: number) {
+    this.drumsLowEqValue = Math.max(-15, Math.min(15, db));
     if (this.ctx && this.drumsLowEq) {
-      this.drumsLowEq.gain.setValueAtTime(Math.max(-15, Math.min(15, db)), this.ctx.currentTime);
+      this.drumsLowEq.gain.setValueAtTime(this.drumsLowEqValue, this.ctx.currentTime);
     }
   }
 
   public getDrumsLowEq(): number {
-    return this.drumsLowEq?.gain.value || 0;
+    return this.drumsLowEqValue;
   }
 
   public setDrumsHighEq(db: number) {
+    this.drumsHighEqValue = Math.max(-15, Math.min(15, db));
     if (this.ctx && this.drumsHighEq) {
-      this.drumsHighEq.gain.setValueAtTime(Math.max(-15, Math.min(15, db)), this.ctx.currentTime);
+      this.drumsHighEq.gain.setValueAtTime(this.drumsHighEqValue, this.ctx.currentTime);
     }
   }
 
   public getDrumsHighEq(): number {
-    return this.drumsHighEq?.gain.value || 0;
+    return this.drumsHighEqValue;
   }
 
   public setDrumsGain(gain: number) {
+    this.drumsGainValue = Math.max(0, Math.min(2.0, gain));
     if (this.ctx && this.drumsGainNode) {
-      const activeMult = this.isDrumsActive ? 1.0 : 0;
-      this.drumsGainNode.gain.setValueAtTime(Math.max(0, Math.min(2.0, gain)) * activeMult, this.ctx.currentTime);
+      const target = this.isDrumsActive ? this.drumsGainValue : 0;
+      this.drumsGainNode.gain.cancelScheduledValues(this.ctx.currentTime);
+      this.drumsGainNode.gain.setTargetAtTime(target, this.ctx.currentTime, 0.02);
     }
   }
 
   public getDrumsGain(): number {
-    return this.drumsGainNode?.gain.value || 1.0;
+    return this.drumsGainValue;
   }
 
   public async loadSoundFont(arrayBuffer: ArrayBuffer, name?: string) {
@@ -651,32 +674,110 @@ export class ChordAudioEngine {
     return this.customInstrumentName;
   }
 
-  public async loadCustomDrumLoop(arrayBuffer: ArrayBuffer, baseBpm: number, name?: string) {
+  public async addDrumLoop(arrayBuffer: ArrayBuffer, baseBpm: number, name?: string): Promise<DrumLoopRecord> {
     const ctx = this.ensureContext();
-    this.customDrumLoopBuffer = await ctx.decodeAudioData(arrayBuffer);
-    this.customDrumLoopBaseBpm = Math.max(20, baseBpm);
-    this.customDrumLoopName = name || 'DrumLoop.wav';
+    const buffer = await ctx.decodeAudioData(arrayBuffer);
+    const loop: DrumLoopRecord = {
+      id: 'loop_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+      name: name || `Loop ${this.drumLoops.length + 1}`,
+      buffer,
+      baseBpm: Math.max(20, baseBpm || 120)
+    };
+    this.drumLoops.push(loop);
+    this.activeDrumLoopIndex = this.drumLoops.length - 1;
+    this.customDrumLoopBuffer = loop.buffer;
+    this.customDrumLoopBaseBpm = loop.baseBpm;
+    this.customDrumLoopName = loop.name;
+    this.isDrumsActive = true;
+    return loop;
   }
 
-  public clearCustomDrumLoop() {
+  public async loadCustomDrumLoop(arrayBuffer: ArrayBuffer, baseBpm: number, name?: string) {
+    await this.addDrumLoop(arrayBuffer, baseBpm, name);
+  }
+
+  public removeDrumLoop(id: string) {
+    const idx = this.drumLoops.findIndex(l => l.id === id);
+    if (idx !== -1) {
+      this.drumLoops.splice(idx, 1);
+      if (this.activeDrumLoopIndex >= this.drumLoops.length) {
+        this.activeDrumLoopIndex = Math.max(0, this.drumLoops.length - 1);
+      }
+      const active = this.getActiveDrumLoop();
+      this.customDrumLoopBuffer = active ? active.buffer : null;
+      this.customDrumLoopName = active ? active.name : null;
+      this.customDrumLoopBaseBpm = active ? active.baseBpm : 120;
+    }
+  }
+
+  public cycleDrumLoop(): DrumLoopRecord | null {
+    if (this.drumLoops.length === 0) return null;
+    this.activeDrumLoopIndex = (this.activeDrumLoopIndex + 1) % this.drumLoops.length;
+    const active = this.drumLoops[this.activeDrumLoopIndex];
+    this.customDrumLoopBuffer = active.buffer;
+    this.customDrumLoopName = active.name;
+    this.customDrumLoopBaseBpm = active.baseBpm;
+    this.isDrumsActive = true;
+    return active;
+  }
+
+  public setActiveDrumLoopIndex(index: number): DrumLoopRecord | null {
+    if (index >= 0 && index < this.drumLoops.length) {
+      this.activeDrumLoopIndex = index;
+      const active = this.drumLoops[this.activeDrumLoopIndex];
+      this.customDrumLoopBuffer = active.buffer;
+      this.customDrumLoopName = active.name;
+      this.customDrumLoopBaseBpm = active.baseBpm;
+      this.isDrumsActive = true;
+      return active;
+    }
+    return null;
+  }
+
+  public getDrumLoops(): DrumLoopRecord[] {
+    return this.drumLoops;
+  }
+
+  public getActiveDrumLoop(): DrumLoopRecord | null {
+    if (this.drumLoops.length === 0) return null;
+    return this.drumLoops[this.activeDrumLoopIndex] || this.drumLoops[0];
+  }
+
+  public getActiveDrumLoopIndex(): number {
+    return this.activeDrumLoopIndex;
+  }
+
+  public clearAllDrumLoops() {
+    this.drumLoops = [];
+    this.activeDrumLoopIndex = 0;
     this.customDrumLoopBuffer = null;
     this.customDrumLoopName = null;
   }
 
+  public clearCustomDrumLoop() {
+    this.clearAllDrumLoops();
+  }
+
   public getHasCustomDrumLoop(): boolean {
-    return this.customDrumLoopBuffer !== null;
+    return this.drumLoops.length > 0 || this.customDrumLoopBuffer !== null;
   }
 
   public getCustomDrumLoopName(): string | null {
-    return this.customDrumLoopName;
+    const active = this.getActiveDrumLoop();
+    return active ? active.name : this.customDrumLoopName;
   }
 
   public setCustomDrumLoopBaseBpm(bpm: number) {
+    const active = this.getActiveDrumLoop();
+    if (active) {
+      active.baseBpm = Math.max(20, bpm);
+    }
     this.customDrumLoopBaseBpm = Math.max(20, bpm);
   }
 
   public getCustomDrumLoopBaseBpm(): number {
-    return this.customDrumLoopBaseBpm;
+    const active = this.getActiveDrumLoop();
+    return active ? active.baseBpm : this.customDrumLoopBaseBpm;
   }
 
   // Transport state
@@ -757,15 +858,15 @@ export class ChordAudioEngine {
     this.keysLowEq = ctx.createBiquadFilter();
     this.keysLowEq.type = 'lowshelf';
     this.keysLowEq.frequency.setValueAtTime(200, ctx.currentTime);
-    this.keysLowEq.gain.setValueAtTime(0, ctx.currentTime);
+    this.keysLowEq.gain.setValueAtTime(this.keysLowEqValue, ctx.currentTime);
 
     this.keysHighEq = ctx.createBiquadFilter();
     this.keysHighEq.type = 'highshelf';
     this.keysHighEq.frequency.setValueAtTime(5000, ctx.currentTime);
-    this.keysHighEq.gain.setValueAtTime(0, ctx.currentTime);
+    this.keysHighEq.gain.setValueAtTime(this.keysHighEqValue, ctx.currentTime);
 
     this.keysGainNode = ctx.createGain();
-    this.keysGainNode.gain.setValueAtTime(this.isKeysActive ? 1.0 : 0, ctx.currentTime);
+    this.keysGainNode.gain.setValueAtTime(this.isKeysActive ? this.keysGainValue : 0, ctx.currentTime);
 
     this.masterInput.connect(this.keysLowEq);
     this.keysLowEq.connect(this.keysHighEq);
@@ -840,7 +941,6 @@ export class ChordAudioEngine {
     }
 
     // Connect console tone shaping into chorus paths
-    this.masterInput.connect(subHighpass);
     subHighpass.connect(consoleLowWarmth);
     consoleLowWarmth.connect(consoleAirCushion);
 
@@ -883,15 +983,15 @@ export class ChordAudioEngine {
     this.drumsLowEq = ctx.createBiquadFilter();
     this.drumsLowEq.type = 'lowshelf';
     this.drumsLowEq.frequency.setValueAtTime(200, ctx.currentTime);
-    this.drumsLowEq.gain.setValueAtTime(0, ctx.currentTime);
+    this.drumsLowEq.gain.setValueAtTime(this.drumsLowEqValue, ctx.currentTime);
 
     this.drumsHighEq = ctx.createBiquadFilter();
     this.drumsHighEq.type = 'highshelf';
     this.drumsHighEq.frequency.setValueAtTime(5000, ctx.currentTime);
-    this.drumsHighEq.gain.setValueAtTime(0, ctx.currentTime);
+    this.drumsHighEq.gain.setValueAtTime(this.drumsHighEqValue, ctx.currentTime);
 
     this.drumsGainNode = ctx.createGain();
-    this.drumsGainNode.gain.setValueAtTime(this.isDrumsActive ? 1.0 : 0, ctx.currentTime);
+    this.drumsGainNode.gain.setValueAtTime(this.isDrumsActive ? this.drumsGainValue : 0, ctx.currentTime);
 
     this.drumGain.connect(this.drumsLowEq);
     this.drumsLowEq.connect(this.drumsHighEq);
@@ -984,8 +1084,7 @@ export class ChordAudioEngine {
     const ctx = this.ensureContext();
     if (!this.masterInput) return;
 
-    // Cut base keys sound: only use uploaded sounds
-    if (!this.soundFont && !this.customInstrumentBuffer) {
+    if (!this.isKeysActive) {
       return;
     }
 
@@ -1887,13 +1986,15 @@ export class ChordAudioEngine {
    */
   private scheduleBackbeatAtTime(time: number, beatInMeasure: number, secPerBeat: number) {
     if (!this.isBeatActive) return;
-    if (!this.customDrumLoopBuffer) return; // Cut base drum sound entirely
+    if (!this.isDrumsActive) return;
+    const activeLoop = this.getActiveDrumLoop();
+    if (!activeLoop) return; // Cut base drum sound entirely: only play uploaded drum loops
 
     if (this.ctx && this.drumGain) {
       if (beatInMeasure === 0) {
         const source = this.ctx.createBufferSource();
-        source.buffer = this.customDrumLoopBuffer;
-        const rate = this.bpm / this.customDrumLoopBaseBpm;
+        source.buffer = activeLoop.buffer;
+        const rate = this.bpm / activeLoop.baseBpm;
         source.playbackRate.setValueAtTime(Math.max(0.4, Math.min(2.5, rate)), time);
 
         const loopGain = this.ctx.createGain();
@@ -1903,7 +2004,7 @@ export class ChordAudioEngine {
         loopGain.connect(this.drumGain);
 
         source.start(time);
-        source.stop(time + (this.customDrumLoopBuffer.duration / rate));
+        source.stop(time + (activeLoop.buffer.duration / rate));
       }
       return;
     }

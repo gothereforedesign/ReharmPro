@@ -2670,15 +2670,6 @@ function updateTransportUI(isPlaying = audioEngine.getIsPlaying()) {
     tempoBtn.setAttribute('title', `Tempo: ${bpm} BPM (Tap to cycle: 60, 70, 80, 90, 100, 110, 120 | Press T)`);
   }
 
-  const currentModel = state.selectedEPModel || audioEngine.getModel();
-  const epInfo = EP_MODELS[currentModel] || EP_MODELS.rhodes;
-
-  if (epBadge) {
-    epBadge.textContent = epInfo.badge;
-  }
-  if (epBtn) {
-    epBtn.title = `Keys: ${epInfo.name} (${epInfo.description}) — Tap to cycle | Hold for styles | Press K`;
-  }
 
   if (loopBtn) {
     if (audioEngine.getIsLooping()) {
@@ -2690,15 +2681,7 @@ function updateTransportUI(isPlaying = audioEngine.getIsPlaying()) {
     }
   }
 
-  if (beatBtn) {
-    if (audioEngine.isBeatEnabled()) {
-      beatBtn.className = 'w-full py-2.5 px-1 sm:px-2 cursor-pointer active:scale-95 transition-all flex items-center justify-center gap-1 select-none text-sky-600 dark:text-[#38bdf8] bg-sky-500/10 dark:bg-[#0c4a6e]/60';
-      beatBtn.title = 'Drums: ACTIVE (Tap to mute | Press B)';
-    } else {
-      beatBtn.className = 'w-full py-2.5 px-1 sm:px-2 cursor-pointer active:scale-95 transition-all flex items-center justify-center gap-1 select-none text-slate-400 hover:text-slate-700 dark:text-slate-500 dark:hover:text-slate-300 hover:bg-slate-100/50 dark:hover:bg-[#0c4a6e]/20';
-      beatBtn.title = 'Drums: MUTED (Tap to activate | Press B)';
-    }
-  }
+  updateTransportButtonActiveStates();
 }
 
 function getReharmOptions(): ReharmExecutionOptions {
@@ -3972,26 +3955,7 @@ function setupInteractions() {
     visualBtn.addEventListener('pointercancel', cancelHold);
   }
 
-  const epBtn = document.getElementById('epSelectorBtn');
-  if (epBtn) {
-    let epTimer: ReturnType<typeof setTimeout> | null = null;
-    epBtn.addEventListener('pointerdown', (e: PointerEvent) => {
-      if (e.pointerType === 'mouse' && e.button !== 0) return;
-      if (epTimer) clearTimeout(epTimer);
-      epTimer = setTimeout(() => {
-        ReharmEngine.toggleEPPopover();
-      }, 250);
-    });
-    const clearEPTimer = () => {
-      if (epTimer) {
-        clearTimeout(epTimer);
-        epTimer = null;
-      }
-    };
-    epBtn.addEventListener('pointerup', clearEPTimer);
-    epBtn.addEventListener('pointerleave', clearEPTimer);
-    epBtn.addEventListener('pointercancel', clearEPTimer);
-  }
+
 
   document.addEventListener('pointerdown', e => {
     const target = e.target as Node | null;
@@ -3999,6 +3963,7 @@ function setupInteractions() {
     const insideSet = setPopover && target && setPopover.contains(target);
     const insideTech = techPopover && target && techPopover.contains(target);
     const epPopover = document.getElementById('epPopover');
+    const epBtn = document.getElementById('epSelectorBtn');
     const insideEPPopover = epPopover && target && epPopover.contains(target);
     const insideEPBtn = epBtn && target && epBtn.contains(target);
 
@@ -4149,11 +4114,15 @@ function setupInteractions() {
 
 const BPM_CYCLE_LIST = [60, 70, 80, 90, 100, 110, 120];
 
+let lastTouchInteractionTime = 0;
+
 let keysHoldTimer: ReturnType<typeof setTimeout> | null = null;
 let keysLongPressed = false;
+let keysPressStartTime = 0;
 
 let drumsHoldTimer: ReturnType<typeof setTimeout> | null = null;
 let drumsLongPressed = false;
+let drumsPressStartTime = 0;
 
 function updateUploadButtonStates() {
   updateTransportButtonActiveStates();
@@ -4161,24 +4130,54 @@ function updateUploadButtonStates() {
 
 function updateTransportButtonActiveStates() {
   const epBtn = document.getElementById('epSelectorBtn');
+  const epBadge = document.getElementById('epBadgeText');
   const beatBtn = document.getElementById('beatToggleBtn');
+  const beatBadge = document.getElementById('beatBadgeText');
 
-  const keysActive = audioEngine.getKeysActive();
-  const drumsActive = audioEngine.getDrumsActive();
+  const currentModel = state.selectedEPModel || audioEngine.getModel();
+  const epInfo = EP_MODELS[currentModel] || EP_MODELS.rhodes;
+
+  if (epBadge) {
+    epBadge.textContent = epInfo.badge.toUpperCase();
+  }
 
   if (epBtn) {
+    const keysActive = audioEngine.getKeysActive();
     if (keysActive) {
-      epBtn.classList.remove('opacity-40');
+      epBtn.className = 'w-full py-2.5 px-1 sm:px-2 cursor-pointer active:scale-95 transition-all flex items-center justify-center gap-1 select-none text-sky-600 dark:text-[#38bdf8] bg-sky-500/10 dark:bg-[#0c4a6e]/60';
+      epBtn.title = `Keys: ${epInfo.name} (Tap: Cycle sound | Hold: Settings)`;
     } else {
-      epBtn.classList.add('opacity-40');
+      epBtn.className = 'w-full py-2.5 px-1 sm:px-2 cursor-pointer active:scale-95 transition-all flex items-center justify-center gap-1 select-none text-slate-400 hover:text-slate-700 dark:text-slate-500 dark:hover:text-slate-300 hover:bg-slate-100/50 dark:hover:bg-[#0c4a6e]/20';
+      epBtn.title = `Keys: Muted (Tap: Cycle sound | Hold: Settings)`;
+    }
+  }
+
+  const drumLoops = audioEngine.getDrumLoops();
+  const hasDrums = drumLoops.length > 0;
+  const activeLoop = audioEngine.getActiveDrumLoop();
+  const drumsActive = audioEngine.getDrumsActive();
+
+  if (beatBadge) {
+    if (!hasDrums) {
+      beatBadge.textContent = 'DRUMS';
+    } else if (drumLoops.length === 1) {
+      beatBadge.textContent = 'DRUMS';
+    } else {
+      const activeIdx = audioEngine.getActiveDrumLoopIndex() + 1;
+      beatBadge.textContent = `DRUM ${activeIdx}`;
     }
   }
 
   if (beatBtn) {
-    if (drumsActive) {
-      beatBtn.classList.remove('opacity-40');
+    if (!hasDrums) {
+      beatBtn.className = 'w-full py-2.5 px-1 sm:px-2 cursor-pointer transition-all flex items-center justify-center gap-1 select-none text-slate-400 dark:text-slate-600 opacity-40';
+      beatBtn.title = 'Drums: Empty (Tap/Hold to upload loops)';
+    } else if (drumsActive) {
+      beatBtn.className = 'w-full py-2.5 px-1 sm:px-2 cursor-pointer active:scale-95 transition-all flex items-center justify-center gap-1 select-none text-sky-600 dark:text-[#38bdf8] bg-sky-500/10 dark:bg-[#0c4a6e]/60';
+      beatBtn.title = `Drums: ${activeLoop?.name || 'Active'} (Tap: Cycle loop | Hold: Settings)`;
     } else {
-      beatBtn.classList.add('opacity-40');
+      beatBtn.className = 'w-full py-2.5 px-1 sm:px-2 cursor-pointer active:scale-95 transition-all flex items-center justify-center gap-1 select-none text-slate-400 hover:text-slate-700 dark:text-slate-500 dark:hover:text-slate-300 hover:bg-slate-100/50 dark:hover:bg-[#0c4a6e]/20';
+      beatBtn.title = 'Drums: Muted (Tap: Cycle loop | Hold: Settings)';
     }
   }
 }
@@ -4264,24 +4263,68 @@ const ReharmEngine = {
     updateTransportUI();
   },
 
+  cycleEPModel() {
+    const nextModel = audioEngine.cycleModel();
+    state.selectedEPModel = nextModel;
+    audioEngine.setKeysActive(true);
+    updateTransportButtonActiveStates();
+    ReharmEngine.syncKeysModalUI();
+    persistVault();
+  },
+
+  selectEPModel(model: ElectricPianoModel) {
+    if (EP_MODELS[model]) {
+      audioEngine.setModel(model);
+      state.selectedEPModel = model;
+      audioEngine.setKeysActive(true);
+      updateTransportButtonActiveStates();
+      ReharmEngine.syncKeysModalUI();
+      persistVault();
+    }
+  },
+
+  toggleBeat() {
+    const hasDrums = audioEngine.getHasCustomDrumLoop();
+    if (!hasDrums) {
+      ReharmEngine.openDrumsModal();
+      return;
+    }
+    audioEngine.cycleDrumLoop();
+    audioEngine.setDrumsActive(true);
+    updateTransportButtonActiveStates();
+    ReharmEngine.syncDrumsModalUI();
+  },
+
   toggleAudioModal() {},
 
-  startKeysPressHold() {
+  startKeysPressHold(e?: Event) {
+    if (e && 'touches' in e) {
+      lastTouchInteractionTime = Date.now();
+    } else if (Date.now() - lastTouchInteractionTime < 600) {
+      return;
+    }
     keysLongPressed = false;
+    keysPressStartTime = Date.now();
+    if (keysHoldTimer) clearTimeout(keysHoldTimer);
     keysHoldTimer = setTimeout(() => {
       keysLongPressed = true;
       ReharmEngine.openKeysModal();
     }, 500);
   },
 
-  endKeysPressHold() {
+  endKeysPressHold(e?: Event) {
+    if (e && 'touches' in e) {
+      lastTouchInteractionTime = Date.now();
+    } else if (Date.now() - lastTouchInteractionTime < 600) {
+      return;
+    }
     if (keysHoldTimer) {
       clearTimeout(keysHoldTimer);
       keysHoldTimer = null;
     }
-    if (!keysLongPressed) {
-      audioEngine.toggleKeysActive();
-      updateTransportButtonActiveStates();
+    const elapsed = Date.now() - keysPressStartTime;
+    if (!keysLongPressed && elapsed < 500) {
+      ReharmEngine.cycleEPModel();
     }
     keysLongPressed = false;
   },
@@ -4308,20 +4351,24 @@ const ReharmEngine = {
   },
 
   syncKeysModalUI() {
-    const fileList = document.getElementById('keysModalFileList');
-    const keyName = audioEngine.getSoundFontName() || audioEngine.getCustomInstrumentName();
-    if (fileList) {
-      if (keyName) {
-        fileList.innerHTML = `
-          <div class="flex items-center justify-between bg-slate-100 dark:bg-[#030d17] px-2 py-1 rounded text-[11px] font-mono">
-            <span class="truncate text-slate-700 dark:text-slate-200">${keyName}</span>
-            <button type="button" onclick="window.ReharmEngine.deleteKeysFile()" class="text-rose-500 hover:text-rose-700 font-bold px-1 cursor-pointer">×</button>
-          </div>
-        `;
-      } else {
-        fileList.innerHTML = `<span class="text-[11px] text-slate-400 dark:text-slate-500">No file uploaded</span>`;
+    const currentModel = state.selectedEPModel || audioEngine.getModel();
+    const modelButtons: Record<ElectricPianoModel, string> = {
+      rhodes: 'modelBtnRhodes',
+      wurlitzer: 'modelBtnWurli',
+      dx7: 'modelBtnDx7',
+      clavinet: 'modelBtnClav'
+    };
+
+    (Object.keys(modelButtons) as ElectricPianoModel[]).forEach((m) => {
+      const btn = document.getElementById(modelButtons[m]);
+      if (btn) {
+        if (m === currentModel) {
+          btn.className = 'py-1 px-1 rounded text-[10px] font-mono font-bold text-center border border-sky-500 bg-sky-500/20 text-sky-600 dark:text-[#38bdf8] cursor-pointer';
+        } else {
+          btn.className = 'py-1 px-1 rounded text-[10px] font-mono font-bold text-center border border-slate-200 dark:border-[#0c4a6e] hover:border-sky-500 text-slate-700 dark:text-slate-300 cursor-pointer';
+        }
       }
-    }
+    });
 
     const lowSlider = document.getElementById('keysLowSlider') as HTMLInputElement;
     const highSlider = document.getElementById('keysHighSlider') as HTMLInputElement;
@@ -4342,34 +4389,6 @@ const ReharmEngine = {
     if (lowValSpan) lowValSpan.textContent = `${lowVal > 0 ? '+' : ''}${lowVal} dB`;
     if (highValSpan) highValSpan.textContent = `${highVal > 0 ? '+' : ''}${highVal} dB`;
     if (gainValSpan) gainValSpan.textContent = `${gainVal.toFixed(2)}x`;
-  },
-
-  async handleKeysUpload(e: Event) {
-    const input = e.target as HTMLInputElement;
-    if (!input.files || input.files.length === 0) return;
-    const file = input.files[0];
-    const isSf2 = file.name.toLowerCase().endsWith('.sf2') || file.type.includes('soundfont');
-    try {
-      const arrayBuffer = await file.arrayBuffer();
-      if (isSf2) {
-        await audioEngine.loadSoundFont(arrayBuffer, file.name);
-      } else {
-        await audioEngine.loadCustomInstrumentSample(arrayBuffer, file.name);
-      }
-      ReharmEngine.syncKeysModalUI();
-      updateUploadButtonStates();
-    } catch (err) {
-      console.error('Failed to load keys file:', err);
-    }
-  },
-
-  deleteKeysFile() {
-    audioEngine.clearSoundFont();
-    audioEngine.clearCustomInstrument();
-    const input = document.getElementById('keysFileInput') as HTMLInputElement;
-    if (input) input.value = '';
-    ReharmEngine.syncKeysModalUI();
-    updateUploadButtonStates();
   },
 
   updateKeysLow(val: string) {
@@ -4399,22 +4418,34 @@ const ReharmEngine = {
     }
   },
 
-  startDrumsPressHold() {
+  startDrumsPressHold(e?: Event) {
+    if (e && 'touches' in e) {
+      lastTouchInteractionTime = Date.now();
+    } else if (Date.now() - lastTouchInteractionTime < 600) {
+      return;
+    }
     drumsLongPressed = false;
+    drumsPressStartTime = Date.now();
+    if (drumsHoldTimer) clearTimeout(drumsHoldTimer);
     drumsHoldTimer = setTimeout(() => {
       drumsLongPressed = true;
       ReharmEngine.openDrumsModal();
     }, 500);
   },
 
-  endDrumsPressHold() {
+  endDrumsPressHold(e?: Event) {
+    if (e && 'touches' in e) {
+      lastTouchInteractionTime = Date.now();
+    } else if (Date.now() - lastTouchInteractionTime < 600) {
+      return;
+    }
     if (drumsHoldTimer) {
       clearTimeout(drumsHoldTimer);
       drumsHoldTimer = null;
     }
-    if (!drumsLongPressed) {
-      audioEngine.toggleDrumsActive();
-      updateTransportButtonActiveStates();
+    const elapsed = Date.now() - drumsPressStartTime;
+    if (!drumsLongPressed && elapsed < 500) {
+      ReharmEngine.toggleBeat();
     }
     drumsLongPressed = false;
   },
@@ -4442,17 +4473,25 @@ const ReharmEngine = {
 
   syncDrumsModalUI() {
     const fileList = document.getElementById('drumsModalFileList');
-    const drumName = audioEngine.getCustomDrumLoopName();
+    const loops = audioEngine.getDrumLoops();
+    const activeIdx = audioEngine.getActiveDrumLoopIndex();
     if (fileList) {
-      if (drumName) {
-        fileList.innerHTML = `
-          <div class="flex items-center justify-between bg-slate-100 dark:bg-[#030d17] px-2 py-1 rounded text-[11px] font-mono">
-            <span class="truncate text-slate-700 dark:text-slate-200">${drumName}</span>
-            <button type="button" onclick="window.ReharmEngine.deleteDrumsFile()" class="text-rose-500 hover:text-rose-700 font-bold px-1 cursor-pointer">×</button>
-          </div>
-        `;
+      if (loops.length > 0) {
+        fileList.innerHTML = loops.map((loop, idx) => {
+          const isActive = idx === activeIdx;
+          return `
+            <div class="flex items-center justify-between px-2 py-1 rounded text-[11px] font-mono cursor-pointer transition-colors ${
+              isActive
+                ? 'bg-sky-500/15 border border-sky-500/50 text-sky-700 dark:text-[#38bdf8]'
+                : 'bg-slate-100 dark:bg-[#030d17] border border-transparent text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-[#0c4a6e]/40'
+            }" onclick="window.ReharmEngine.selectDrumLoop('${loop.id}')">
+              <span class="truncate flex-1 font-bold ${isActive ? 'text-sky-600 dark:text-[#38bdf8]' : ''}">${loop.name}</span>
+              <button type="button" onclick="event.stopPropagation(); window.ReharmEngine.deleteDrumLoop('${loop.id}')" class="text-rose-500 hover:text-rose-700 font-bold px-1 ml-2 cursor-pointer" title="Delete">×</button>
+            </div>
+          `;
+        }).join('');
       } else {
-        fileList.innerHTML = `<span class="text-[11px] text-slate-400 dark:text-slate-500">No file uploaded</span>`;
+        fileList.innerHTML = `<span class="text-[11px] text-slate-400 dark:text-slate-500">None</span>`;
       }
     }
 
@@ -4484,15 +4523,34 @@ const ReharmEngine = {
     const input = e.target as HTMLInputElement;
     const baseBpmInput = document.getElementById('drumsBaseBpmInput') as HTMLInputElement;
     if (!input.files || input.files.length === 0) return;
-    const file = input.files[0];
     const baseBpm = baseBpmInput ? parseInt(baseBpmInput.value, 10) || 120 : 120;
     try {
-      const arrayBuffer = await file.arrayBuffer();
-      await audioEngine.loadCustomDrumLoop(arrayBuffer, baseBpm, file.name);
+      for (let i = 0; i < input.files.length; i++) {
+        const file = input.files[i];
+        const arrayBuffer = await file.arrayBuffer();
+        await audioEngine.addDrumLoop(arrayBuffer, baseBpm, file.name);
+      }
+      input.value = '';
       ReharmEngine.syncDrumsModalUI();
       updateUploadButtonStates();
     } catch (err) {
       console.error('Failed to load drum loop:', err);
+    }
+  },
+
+  deleteDrumLoop(id: string) {
+    audioEngine.removeDrumLoop(id);
+    ReharmEngine.syncDrumsModalUI();
+    updateUploadButtonStates();
+  },
+
+  selectDrumLoop(id: string) {
+    const loops = audioEngine.getDrumLoops();
+    const idx = loops.findIndex(l => l.id === id);
+    if (idx !== -1) {
+      audioEngine.setActiveDrumLoopIndex(idx);
+      ReharmEngine.syncDrumsModalUI();
+      updateUploadButtonStates();
     }
   },
 
