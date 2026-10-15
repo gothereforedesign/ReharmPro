@@ -526,6 +526,9 @@ export class ChordAudioEngine {
       this.keysGainNode.gain.cancelScheduledValues(this.ctx.currentTime);
       this.keysGainNode.gain.setTargetAtTime(target, this.ctx.currentTime, 0.02);
     }
+    if (!active) {
+      this.setDrumsActive(false);
+    }
   }
 
   public toggleKeysActive(): boolean {
@@ -558,7 +561,7 @@ export class ChordAudioEngine {
   }
 
   public setKeysLowEq(db: number) {
-    this.keysLowEqValue = Math.max(-15, Math.min(15, db));
+    this.keysLowEqValue = Math.max(-24, Math.min(24, db));
     if (this.ctx && this.keysLowEq) {
       this.keysLowEq.gain.setValueAtTime(this.keysLowEqValue, this.ctx.currentTime);
     }
@@ -569,7 +572,7 @@ export class ChordAudioEngine {
   }
 
   public setKeysHighEq(db: number) {
-    this.keysHighEqValue = Math.max(-15, Math.min(15, db));
+    this.keysHighEqValue = Math.max(-24, Math.min(24, db));
     if (this.ctx && this.keysHighEq) {
       this.keysHighEq.gain.setValueAtTime(this.keysHighEqValue, this.ctx.currentTime);
     }
@@ -586,6 +589,10 @@ export class ChordAudioEngine {
       this.keysGainNode.gain.cancelScheduledValues(this.ctx.currentTime);
       this.keysGainNode.gain.setTargetAtTime(target, this.ctx.currentTime, 0.02);
     }
+    if (this.keysGainValue === 0) {
+      this.setKeysActive(false);
+      this.setDrumsActive(false);
+    }
   }
 
   public getKeysGain(): number {
@@ -593,7 +600,7 @@ export class ChordAudioEngine {
   }
 
   public setDrumsLowEq(db: number) {
-    this.drumsLowEqValue = Math.max(-15, Math.min(15, db));
+    this.drumsLowEqValue = Math.max(-24, Math.min(24, db));
     if (this.ctx && this.drumsLowEq) {
       this.drumsLowEq.gain.setValueAtTime(this.drumsLowEqValue, this.ctx.currentTime);
     }
@@ -604,9 +611,11 @@ export class ChordAudioEngine {
   }
 
   public setDrumsHighEq(db: number) {
-    this.drumsHighEqValue = Math.max(-15, Math.min(15, db));
+    this.drumsHighEqValue = Math.max(-24, Math.min(24, db));
     if (this.ctx && this.drumsHighEq) {
-      this.drumsHighEq.gain.setValueAtTime(this.drumsHighEqValue, this.ctx.currentTime);
+      // Lofi muffled filter sweep: negative dB lowers lowpass filter cutoff down to ~200Hz
+      const cutoff = 5500 * Math.pow(2, this.drumsHighEqValue / 5);
+      this.drumsHighEq.frequency.setTargetAtTime(Math.max(150, Math.min(18000, cutoff)), this.ctx.currentTime, 0.02);
     }
   }
 
@@ -853,7 +862,7 @@ export class ChordAudioEngine {
    */
   private buildMasterSignalChain(ctx: AudioContext) {
     this.masterInput = ctx.createGain();
-    this.masterInput.gain.setValueAtTime(0.78, ctx.currentTime);
+    this.masterInput.gain.setValueAtTime(0.88, ctx.currentTime);
 
     this.keysLowEq = ctx.createBiquadFilter();
     this.keysLowEq.type = 'lowshelf';
@@ -986,9 +995,10 @@ export class ChordAudioEngine {
     this.drumsLowEq.gain.setValueAtTime(this.drumsLowEqValue, ctx.currentTime);
 
     this.drumsHighEq = ctx.createBiquadFilter();
-    this.drumsHighEq.type = 'highshelf';
-    this.drumsHighEq.frequency.setValueAtTime(5000, ctx.currentTime);
-    this.drumsHighEq.gain.setValueAtTime(this.drumsHighEqValue, ctx.currentTime);
+    this.drumsHighEq.type = 'lowpass';
+    const initCutoff = 5500 * Math.pow(2, this.drumsHighEqValue / 5);
+    this.drumsHighEq.frequency.setValueAtTime(Math.max(150, Math.min(18000, initCutoff)), ctx.currentTime);
+    this.drumsHighEq.Q.setValueAtTime(0.707, ctx.currentTime);
 
     this.drumsGainNode = ctx.createGain();
     this.drumsGainNode.gain.setValueAtTime(this.isDrumsActive ? this.drumsGainValue : 0, ctx.currentTime);
@@ -1218,8 +1228,8 @@ export class ChordAudioEngine {
     const naturalRingDuration = attackSec + initialDecaySec + longDecayTau * 3.5;
     const stopTime = startTime + naturalRingDuration + 0.6;
 
-    // Expressive, cushioned peak strike level: velvety and pleasant (never harsh or hammered)
-    const peakLevel = (isBass ? 0.20 : 0.16) * velocity * normalizationFactor;
+    // Expressive, loud, audible and clear sonic level
+    const peakLevel = (isBass ? 0.36 : 0.30) * velocity * normalizationFactor;
     const sustainLevel = Math.max(0.0001, peakLevel * sustainRatio);
 
     const envGain = ctx.createGain();
