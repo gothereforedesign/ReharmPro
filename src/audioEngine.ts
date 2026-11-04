@@ -137,7 +137,7 @@ export function parseChordForVoicing(chordSymbol: string): ParsedChordIntervals 
   const isHalfDim = qual.includes('ø') || qualLower.includes('m7b5') || qualLower.includes('m7(b5)');
   const isDimTriad = !isFullDim && !isHalfDim && qualLower.includes('dim');
   const isMinorMaj7 = qual.includes('m(maj7)') || qual.includes('mΔ') || qualLower.includes('mmaj7');
-  const isMaj7 = !isMinorMaj7 && (qual.includes('Δ') || qualLower.includes('maj7') || qual.includes('M7'));
+  const isMaj7 = !isMinorMaj7 && (qual.includes('Δ') || qualLower.includes('maj7') || qual.includes('M7') || qualLower.includes('maj9') || qual.includes('Δ9'));
   const isMinor =
     isMinorMaj7 ||
     isHalfDim ||
@@ -177,10 +177,10 @@ export function parseChordForVoicing(chordSymbol: string): ParsedChordIntervals 
     qualLower.includes('11') ||
     qualLower.includes('13')
   ) {
-    if (!qualLower.includes('add9') && !qualLower.includes('add2')) {
+    if (!qualLower.includes('add9') && !qualLower.includes('add2') && !qualLower.includes('6/9')) {
       seventhInterval = 10; // b7
     }
-  } else if (qualLower === '6' || qualLower === 'm6' || qualLower.includes('6')) {
+  } else if (qualLower === '6' || qualLower === 'm6' || qualLower.includes('6/9') || qualLower.includes('6')) {
     seventhInterval = 9; // 6th
   }
 
@@ -192,7 +192,7 @@ export function parseChordForVoicing(chordSymbol: string): ParsedChordIntervals 
     extensionInterval = 15; // #9
   } else if (qualLower.includes('11')) {
     extensionInterval = 17; // 11th
-  } else if (qualLower.includes('9') || qualLower.includes('add9') || qualLower.includes('add2')) {
+  } else if (qualLower.includes('9') || qualLower.includes('add9') || qualLower.includes('add2') || qualLower.includes('6/9')) {
     extensionInterval = 14; // 9
   } else if (qualLower.includes('13')) {
     extensionInterval = 21; // 13
@@ -211,6 +211,10 @@ export function parseChordForVoicing(chordSymbol: string): ParsedChordIntervals 
   } else {
     // Include root in upper structure for triads or 4-note fullness
     intervals.push(0);
+  }
+
+  if (qualLower.includes('#11') || qual.includes('♯11')) {
+    intervals.push(18); // #11 (Lydian extension)
   }
 
   return {

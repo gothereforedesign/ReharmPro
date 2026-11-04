@@ -46,11 +46,11 @@
 
       <!-- Right Controls: Layout Toggle + Sound Upload + PWA Install + Dark Mode Toggle -->
       <div class="flex items-center gap-1">
-        <button id="layoutToggleBtn" type="button" onclick="window.ReharmEngine.toggleLayoutColumns()" class="p-2 rounded-[6px] text-slate-500 hover:text-sky-600 dark:text-[#38bdf8]/70 dark:hover:text-[#38bdf8] transition-colors cursor-pointer" title="Toggle Layout: 1 bar per row (1fr) or 2 bars (1fr 1fr)" aria-label="Toggle chord progression bars per row">
+        <button id="layoutToggleBtn" type="button" onclick="window.ReharmEngine.toggleLayoutColumns()" class="p-2 rounded-[6px] text-sky-600 dark:text-[#38bdf8] bg-sky-50 dark:bg-[#0c4a6e]/40 transition-colors cursor-pointer" title="Current: 1 bar per row (1fr) · Tap to switch to 2 bars (1fr 1fr)" aria-label="Switch to two bars per row">
           <span id="layoutToggleIcon" class="flex items-center justify-center">
             <svg class="w-4 h-4 fill-none stroke-current" viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="4" width="8" height="16" rx="1.5" />
-              <rect x="13" y="4" width="8" height="16" rx="1.5" />
+              <rect x="3" y="4" width="18" height="6.5" rx="1.5" />
+              <rect x="3" y="13.5" width="18" height="6.5" rx="1.5" />
             </svg>
           </span>
         </button>
@@ -137,29 +137,42 @@
             <!-- ROW 1: REHARM TECHNIQUE (20%) + PLAY/START (20%) + RANDOMIZE (60%) -->
             <div class="grid grid-cols-5 gap-2 w-full relative">
               <!-- FLOATING CARD FOR REHARM SET SELECTION (OPENED ON 0.25-SECOND HOLD OF REHARM BUTTON) -->
-              <div id="reharmSetPopover" class="hidden absolute bottom-full left-0 mb-2 z-50 w-44 bg-white dark:bg-[#071d2c] border border-slate-300 dark:border-[#38bdf8]/50 rounded-[10px] shadow-xl p-1.5 flex flex-col gap-1">
-                <button type="button" id="setBtnBasic" onclick="window.ReharmEngine.selectReharmSet('basic')" class="w-full px-3 py-2 rounded-[7px] flex items-center justify-between text-xs font-mono-tabular font-extrabold transition-colors cursor-pointer">
-                  <span>Basic</span>
-                  <span class="text-[11px] opacity-80">μ</span>
+              <div id="reharmSetPopover" class="hidden absolute bottom-full left-0 mb-2 z-50 w-60 bg-white dark:bg-[#071d2c] border border-slate-300 dark:border-[#38bdf8]/50 rounded-[10px] shadow-xl p-1.5 flex flex-col gap-1">
+                <button type="button" id="setBtnAll" onclick="window.ReharmEngine.selectReharmSet('all')" class="w-full px-3 py-1.5 rounded-[7px] flex items-center justify-between text-xs font-mono-tabular font-extrabold transition-colors cursor-pointer">
+                  <span>All Tiers (Weighted)</span>
+                  <span class="text-[10px] font-black px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-600 dark:text-[#38bdf8]">100%</span>
                 </button>
-                <button type="button" id="setBtnJazz" onclick="window.ReharmEngine.selectReharmSet('jazz')" class="w-full px-3 py-2 rounded-[7px] flex items-center justify-between text-xs font-mono-tabular font-extrabold transition-colors cursor-pointer">
-                  <span>Jazz</span>
-                  <span class="text-[11px] opacity-80">ii-V⁷</span>
+                <div class="h-px bg-slate-200 dark:bg-[#0c4a6e]/60 my-0.5"></div>
+                <button type="button" id="setBtnColorTexture" onclick="window.ReharmEngine.selectReharmSet('color_texture')" class="w-full px-3 py-1.5 rounded-[7px] flex items-center justify-between text-xs font-mono-tabular font-extrabold transition-colors cursor-pointer">
+                  <span>1. Color &amp; Texture</span>
+                  <span class="text-[10px] font-black px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-600 dark:text-[#38bdf8]">35%</span>
                 </button>
-                <button type="button" id="setBtnDark" onclick="window.ReharmEngine.selectReharmSet('dark')" class="w-full px-3 py-2 rounded-[7px] flex items-center justify-between text-xs font-mono-tabular font-extrabold transition-colors cursor-pointer">
-                  <span>Dark</span>
-                  <span class="text-[11px] opacity-80">♭vi</span>
+                <button type="button" id="setBtnScalarMotion" onclick="window.ReharmEngine.selectReharmSet('scalar_motion')" class="w-full px-3 py-1.5 rounded-[7px] flex items-center justify-between text-xs font-mono-tabular font-extrabold transition-colors cursor-pointer">
+                  <span>2. Scalar Motion</span>
+                  <span class="text-[10px] font-black px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-600 dark:text-[#38bdf8]">25%</span>
+                </button>
+                <button type="button" id="setBtnCadential" onclick="window.ReharmEngine.selectReharmSet('cadential_approach')" class="w-full px-3 py-1.5 rounded-[7px] flex items-center justify-between text-xs font-mono-tabular font-extrabold transition-colors cursor-pointer">
+                  <span>3. Cadential Approach</span>
+                  <span class="text-[10px] font-black px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-600 dark:text-[#38bdf8]">20%</span>
+                </button>
+                <button type="button" id="setBtnModalTension" onclick="window.ReharmEngine.selectReharmSet('modal_tension')" class="w-full px-3 py-1.5 rounded-[7px] flex items-center justify-between text-xs font-mono-tabular font-extrabold transition-colors cursor-pointer">
+                  <span>4. Modal Tension</span>
+                  <span class="text-[10px] font-black px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-600 dark:text-[#38bdf8]">15%</span>
+                </button>
+                <button type="button" id="setBtnHeavyStructural" onclick="window.ReharmEngine.selectReharmSet('heavy_structural')" class="w-full px-3 py-1.5 rounded-[7px] flex items-center justify-between text-xs font-mono-tabular font-extrabold transition-colors cursor-pointer">
+                  <span>5. Heavy Structural</span>
+                  <span class="text-[10px] font-black px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-600 dark:text-[#38bdf8]">5%</span>
                 </button>
               </div>
 
               <!-- FLOATING DROPDOWN FOR REHARM CATEGORY / TECHNIQUE SELECTION (OPENED ON TAP OF REHARM BUTTON) -->
-              <div id="reharmTechniquePopover" class="hidden absolute bottom-full left-0 mb-2 z-50 w-64 max-h-64 overflow-y-auto no-scrollbar bg-white dark:bg-[#071d2c] border border-slate-300 dark:border-[#38bdf8]/50 rounded-[10px] shadow-2xl p-1.5 flex flex-col gap-1">
+              <div id="reharmTechniquePopover" class="hidden absolute bottom-full left-0 mb-2 z-50 w-72 max-h-72 overflow-y-auto no-scrollbar bg-white dark:bg-[#071d2c] border border-slate-300 dark:border-[#38bdf8]/50 rounded-[10px] shadow-2xl p-1.5 flex flex-col gap-1">
                 <!-- Populated dynamically -->
               </div>
 
               <!-- REHARM TECHNIQUE BUTTON -->
               <div id="reharmBtnWrapper" class="col-span-1 relative flex items-center justify-center" oncontextmenu="event.preventDefault()">
-                <button id="reharmVisualBtn" type="button" class="w-full h-full py-3 px-2 bg-white dark:bg-[#071d2c] hover:bg-slate-50 dark:hover:bg-[#0c4a6e]/50 border border-slate-300/90 dark:border-[#0c4a6e]/70 rounded-[8px] focus:outline-none cursor-pointer shadow-sm flex items-center justify-center transition-all select-none" title="Tap: Reharm Category | Hold 0.25s: Set (Basic / Jazz / Dark)">
+                <button id="reharmVisualBtn" type="button" class="w-full h-full py-3 px-2 bg-white dark:bg-[#071d2c] hover:bg-slate-50 dark:hover:bg-[#0c4a6e]/50 border border-slate-300/90 dark:border-[#0c4a6e]/70 rounded-[8px] focus:outline-none cursor-pointer shadow-sm flex items-center justify-center transition-all select-none" title="Tap: Technique List | Hold 0.25s: 5-Tier Neighborhoods">
                   <span id="reharmIconBadge" class="font-mono-tabular font-black text-[16px] leading-none text-sky-600 dark:text-[#38bdf8] tracking-tight select-none pointer-events-none">I</span>
                 </button>
               </div>

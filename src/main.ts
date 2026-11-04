@@ -62,12 +62,13 @@ export interface ReharmExecutionOptions {
   disableTurnaround?: boolean;
 }
 
-type SavedSectionKey = 'basic' | 'jazz' | 'dark';
+export type SavedSectionKey = 'basic' | 'jazz' | 'dark' | 'neosoul';
 
-interface SavedSections {
+export interface SavedSections {
   basic: string[];
   jazz: string[];
   dark: string[];
+  neosoul: string[];
 }
 
 interface VaultPayload {
@@ -77,6 +78,7 @@ interface VaultPayload {
   baseProgressionsPool: string[];
   selectedEPModel?: ElectricPianoModel;
   barsPerRow?: 1 | 2;
+  explicitLayoutSet?: boolean;
   isBeatActive?: boolean;
   bpm?: number;
 }
@@ -134,9 +136,25 @@ export class Chord {
 
   static fromSymbol(symbolStr: string): Chord {
     if (!symbolStr) return new Chord('C', 'maj');
-    const parts = symbolStr.trim().split('/');
-    const mainPart = parts[0].trim();
-    const rawBass = parts.length > 1 ? parts[1].trim() : null;
+    let mainPart = symbolStr.trim().replace(/^\(|\)$/g, '');
+    let rawBass: string | null = null;
+
+    if (mainPart.includes('/')) {
+      const slashParts = mainPart.split('/');
+      // Detect 6/9 chords like C6/9
+      if (slashParts.length === 2 && slashParts[0].endsWith('6') && slashParts[1].trim() === '9') {
+        mainPart = slashParts[0] + '/9';
+      } else if (slashParts.length === 2 && /^[a-gA-G][#b]?$/.test(slashParts[1].trim())) {
+        mainPart = slashParts[0].trim();
+        rawBass = slashParts[1].trim();
+      } else {
+        mainPart = slashParts[0].trim();
+      }
+    }
+
+    // Support jazz notation like Ab-6 -> Abm6
+    mainPart = mainPart.replace(/^([a-gA-G][#b]?)-([0-9]|maj|dim)/, '$1m$2');
+
     const bassPart = rawBass ? rawBass.replace(/^([a-g])/, (_, c: string) => c.toUpperCase()) : null;
 
     const match = mainPart.match(/^([a-gA-G][#b]?)(.*)$/);
@@ -153,11 +171,17 @@ export class Chord {
       quality = 'm7b5';
     } else if (rawQual === 'm(maj7)' || rawQual === 'mMaj7' || rawQual === 'mΔ7' || rawQual === 'mΔ') {
       quality = 'm(maj7)';
+    } else if (rawQual.includes('#11') || rawQual.includes('maj7#11') || rawQual.includes('Δ#11')) {
+      quality = rawQual.includes('9#11') ? '9#11' : 'maj7#11';
+    } else if (rawQual.includes('maj9') || rawQual.includes('Maj9') || rawQual.includes('Δ9')) {
+      quality = 'maj9';
     } else if (rawQual === 'Δ' || rawQual.includes('maj7') || rawQual.includes('M7') || rawQual.includes('Maj7')) {
       quality = 'maj7';
-    } else if (rawQual.includes('m11') || rawQual.includes('min11')) {
+    } else if (rawQual.includes('6/9') || rawQual.includes('69')) {
+      quality = '6/9';
+    } else if (rawQual.includes('m11') || rawQual.includes('min11') || rawQual.includes('add11')) {
       quality = 'm11';
-    } else if (rawQual.includes('m9') || rawQual.includes('min9')) {
+    } else if (rawQual.includes('m9') || rawQual.includes('min9') || rawQual.includes('m7add2') || rawQual.includes('madd2')) {
       quality = 'm9';
     } else if (rawQual.includes('m7') || rawQual.includes('min7')) {
       quality = 'm7';
@@ -167,6 +191,8 @@ export class Chord {
       quality = 'madd9';
     } else if (rawQual.startsWith('m') || rawQual.startsWith('min')) {
       quality = 'm';
+    } else if (rawQual.includes('#9')) {
+      quality = '7#9';
     } else if (rawQual === '7+' || rawQual === '7#5' || rawQual === '7aug') {
       quality = '7+';
     } else if (rawQual === '+' || rawQual === 'aug') {
@@ -175,6 +201,12 @@ export class Chord {
       quality = '7alt';
     } else if (rawQual.includes('7(b9)') || rawQual.includes('7b9')) {
       quality = '7(b9)';
+    } else if (rawQual === '+6' || rawQual.includes('aug6')) {
+      quality = '+6';
+    } else if (rawQual.includes('9sus') || rawQual.includes('7sus4') || rawQual.includes('7sus')) {
+      quality = '9sus4';
+    } else if (rawQual.includes('7sus2')) {
+      quality = 'sus2';
     } else if (rawQual.includes('add2')) {
       quality = 'add2';
     } else if (rawQual.includes('add9')) {
@@ -223,18 +255,27 @@ export class Chord {
     const qMap: Record<string, string> = {
       'maj': '',
       'maj7': 'Δ',
+      'maj7#11': 'Δ#11',
+      'maj9': 'Δ9',
       'm': 'm',
       'm7': 'm7',
+      'm9': 'm9',
+      'm11': 'm11',
       'm6': 'm6',
       'm(maj7)': 'm(maj7)',
       '7': '7',
       '7alt': '7alt',
       '7+': '7+',
+      '7#9': '7#9',
+      '9#11': '9#11',
       '+': '+',
+      '+6': '+6',
       '7(b9)': '7(b9)',
       '°7': '°7',
       'm7b5': 'ø',
       '6': '6',
+      '6/9': '6/9',
+      '9sus4': '9sus4',
       'add2': 'add2',
       'add9': 'add9',
       'madd9': 'madd9',
@@ -293,7 +334,10 @@ export class TargetBackwardEngine {
       techId === 'side_step_two_five' ||
       techId === 'two_five_mix_std_tri' ||
       techId === 'two_five_mix_tri_std' ||
-      techId === 'two_five_mix_ss_tri'
+      techId === 'two_five_mix_ss_tri' ||
+      techId === 'backdoor_resolution' ||
+      techId === 'half_diminished_shift' ||
+      techId === 'coltrane_changes'
     );
   }
 
@@ -321,7 +365,11 @@ export class TargetBackwardEngine {
       techId === 'ss_mix_ab' ||
       techId === 'ss_mix_ba' ||
       techId === 'chromatic_bass' ||
-      techId === 'diminished_axis'
+      techId === 'diminished_axis' ||
+      techId === 'dom_half_step_below' ||
+      techId === 'whole_step_dominant' ||
+      techId === 'chromatic_planing' ||
+      techId === 'chroma_step_down'
     );
   }
 
@@ -332,7 +380,16 @@ export class TargetBackwardEngine {
       techniqueId === 'inner_sus' ||
       techniqueId === 'stepwise_inversion' ||
       techniqueId === 'add9_triad' ||
-      techniqueId === 'pedal_triads'
+      techniqueId === 'pedal_triads' ||
+      techniqueId === 'tenth_bass_spread' ||
+      techniqueId === 'quartal_stack' ||
+      techniqueId === 'maj7_sharp11' ||
+      techniqueId === 'drop_voicing' ||
+      techniqueId === 'cascading_block' ||
+      techniqueId === 'chromatic_voice_leading' ||
+      techniqueId === 'inner_voice_counterpoint' ||
+      techniqueId === 'descending_bass' ||
+      techniqueId === 'relative_minor_exchange'
     );
   }
 
@@ -798,6 +855,234 @@ export class TargetBackwardEngine {
         break;
       }
 
+      case 'backdoor_resolution': {
+        // Backdoor Cadence: iv7 - bVII7 -> I (e.g. Fm7 - Bb7 -> Cmaj7)
+        const bVII7 = new Chord(this.transpose(targetChordX.root, 10, false), '7', null, false);
+        const iv7 = new Chord(this.transpose(targetChordX.root, 5, false), 'm7', null, false);
+        const domOfIv = this.tonicize(iv7);
+        const iiOfIv = this.add_related_two(domOfIv, true);
+        step1 = bVII7;
+        step2 = iv7;
+        step3 = domOfIv;
+        step4 = iiOfIv;
+        twoChordCell = [iv7, bVII7];
+        threeChordCell = [domOfIv, iv7, bVII7];
+        fourChordCell = [iiOfIv, domOfIv, iv7, bVII7];
+        break;
+      }
+
+      case 'dom_half_step_below': {
+        // Dominant Half-Step Below: VII7 -> I (e.g. B7 -> Cmaj7)
+        const vii7 = new Chord(this.transpose(targetChordX.root, 11, targetChordX.preferSharps), '7', null, targetChordX.preferSharps);
+        const sharpIv7 = new Chord(this.transpose(targetChordX.root, 6, targetChordX.preferSharps), 'm7', null, targetChordX.preferSharps);
+        step1 = vii7;
+        step2 = sharpIv7;
+        step3 = this.tonicize(sharpIv7);
+        step4 = this.add_related_two(step3);
+        twoChordCell = [sharpIv7, vii7];
+        threeChordCell = [step3, sharpIv7, vii7];
+        fourChordCell = [step4, step3, sharpIv7, vii7];
+        break;
+      }
+
+      case 'whole_step_dominant': {
+        // Whole-Step Dominants: bVII7 -> I
+        const bVII7 = new Chord(this.transpose(targetChordX.root, 10, false), '7', null, false);
+        const iv7 = new Chord(this.transpose(targetChordX.root, 5, false), 'm7', null, false);
+        step1 = bVII7;
+        step2 = iv7;
+        step3 = this.tonicize(iv7);
+        step4 = this.add_related_two(step3);
+        twoChordCell = [iv7, bVII7];
+        threeChordCell = [step3, iv7, bVII7];
+        fourChordCell = [step4, step3, iv7, bVII7];
+        break;
+      }
+
+      case 'altered_dominant_expansion': {
+        // Altered Dominant Expansion: V7alt (7alt, 7#9, 7b13)
+        const v7alt = new Chord(this.transpose(targetChordX.root, 7, targetChordX.preferSharps), '7alt', null, targetChordX.preferSharps);
+        const ii7 = this.add_related_two(v7alt, isMin);
+        step1 = v7alt;
+        step2 = ii7;
+        step3 = this.tonicize(ii7);
+        step4 = this.add_related_two(step3);
+        twoChordCell = [ii7, v7alt];
+        threeChordCell = [step3, ii7, v7alt];
+        fourChordCell = [step4, step3, ii7, v7alt];
+        break;
+      }
+
+      case 'rootless_diminished_sub': {
+        // Rootless Diminished Sub: vii°7 in place of V7b9
+        const viiDim = new Chord(this.transpose(targetChordX.root, 11, true), '°7', null, true);
+        const v7b9 = new Chord(this.transpose(targetChordX.root, 7, true), '7(b9)', null, true);
+        step1 = viiDim;
+        step2 = v7b9;
+        step3 = this.add_related_two(v7b9);
+        step4 = this.tonicize(step3);
+        twoChordCell = [v7b9, viiDim];
+        threeChordCell = [step3, v7b9, viiDim];
+        fourChordCell = [step4, step3, v7b9, viiDim];
+        break;
+      }
+
+      case 'half_diminished_shift': {
+        // Half-Diminished Shift: iiø7 -> V7 -> I
+        const iiHalf = new Chord(this.transpose(targetChordX.root, 2, targetChordX.preferSharps), 'm7b5', null, targetChordX.preferSharps);
+        const v7 = this.tonicize(targetChordX);
+        step1 = v7;
+        step2 = iiHalf;
+        step3 = this.tritone_sub(iiHalf);
+        step4 = this.side_step_above(iiHalf);
+        twoChordCell = [iiHalf, v7];
+        threeChordCell = [step3, iiHalf, v7];
+        fourChordCell = [step4, step3, iiHalf, v7];
+        break;
+      }
+
+      case 'flat_mediant_subs': {
+        // Flat-III & Flat-VI Major Subs: bVImaj7 / bIIImaj7
+        const bVI = new Chord(this.transpose(targetChordX.root, 8, false), 'maj7', null, false);
+        const bIII = new Chord(this.transpose(targetChordX.root, 3, false), 'maj7', null, false);
+        const dom = this.tonicize(targetChordX);
+        step1 = bVI;
+        step2 = bIII;
+        step3 = dom;
+        step4 = bVI;
+        twoChordCell = [bIII, bVI];
+        threeChordCell = [dom, bIII, bVI];
+        fourChordCell = [bVI, dom, bIII, bVI];
+        break;
+      }
+
+      case 'phrygian_dominant': {
+        // Phrygian Dominant Shift: bII -> V7b9 -> i
+        const bII = new Chord(this.transpose(targetChordX.root, 1, false), 'maj7', null, false);
+        const v7b9 = new Chord(this.transpose(targetChordX.root, 7, true), '7(b9)', null, true);
+        const ivm = new Chord(this.transpose(targetChordX.root, 5, false), 'm7', null, false);
+        step1 = v7b9;
+        step2 = bII;
+        step3 = ivm;
+        step4 = new Chord(targetChordX.root, 'm7', null, false);
+        twoChordCell = [bII, v7b9];
+        threeChordCell = [ivm, bII, v7b9];
+        fourChordCell = [step4, ivm, bII, v7b9];
+        break;
+      }
+
+      case 'common_tone_diminished': {
+        // Common-Tone Diminished: I°7 -> I
+        const ctDim = new Chord(targetChordX.root, '°7', null, targetChordX.preferSharps);
+        const dom = this.tonicize(targetChordX);
+        step1 = ctDim;
+        step2 = dom;
+        step3 = this.add_related_two(dom);
+        step4 = this.tonicize(step3);
+        twoChordCell = [dom, ctDim];
+        threeChordCell = [step3, dom, ctDim];
+        fourChordCell = [step4, step3, dom, ctDim];
+        break;
+      }
+
+      case 'plagal_variant': {
+        // Minor Plagal Variant: IV -> ivm6 -> I ("Beatles Cadence")
+        const iv = new Chord(this.transpose(targetChordX.root, 5, false), 'm6', null, false);
+        const IV = new Chord(this.transpose(targetChordX.root, 5, false), 'maj7', null, false);
+        const dom = this.tonicize(targetChordX);
+        step1 = iv;
+        step2 = IV;
+        step3 = dom;
+        step4 = this.add_related_two(dom);
+        twoChordCell = [IV, iv];
+        threeChordCell = [dom, IV, iv];
+        fourChordCell = [step4, dom, IV, iv];
+        break;
+      }
+
+      case 'augmented_sixth': {
+        // Augmented Sixth Chord: +6 built on bVI -> V7 -> I
+        const aug6 = new Chord(this.transpose(targetChordX.root, 8, false), '+6', null, false);
+        const v7 = this.tonicize(targetChordX);
+        const iiHalf = new Chord(this.transpose(targetChordX.root, 2, false), 'm7b5', null, false);
+        step1 = v7;
+        step2 = aug6;
+        step3 = iiHalf;
+        step4 = new Chord(this.transpose(targetChordX.root, 5, false), 'm6', null, false);
+        twoChordCell = [aug6, v7];
+        threeChordCell = [iiHalf, aug6, v7];
+        fourChordCell = [step4, iiHalf, aug6, v7];
+        break;
+      }
+
+      case 'coltrane_changes': {
+        // Coltrane Changes: Major thirds cycle (Target, Target - 4 semitones, Target - 8 semitones)
+        const domC = this.tonicize(targetChordX);
+        const majE = new Chord(this.transpose(targetChordX.root, 4, targetChordX.preferSharps), 'maj7', null, targetChordX.preferSharps);
+        const domB = new Chord(this.transpose(targetChordX.root, 11, targetChordX.preferSharps), '7', null, targetChordX.preferSharps);
+        const majAb = new Chord(this.transpose(targetChordX.root, 8, false), 'maj7', null, false);
+        step1 = domC;
+        step2 = majE;
+        step3 = domB;
+        step4 = majAb;
+        twoChordCell = [majE, domC];
+        threeChordCell = [domB, majE, domC];
+        fourChordCell = [majAb, domB, majE, domC];
+        break;
+      }
+
+      case 'chromatic_planing': {
+        // Chromatic Planing: Parallel descending glide into target arrival
+        step1 = this.side_step_above(targetChordX);
+        step2 = this.side_step_above(step1);
+        step3 = this.side_step_above(step2);
+        step4 = this.side_step_above(step3);
+        twoChordCell = [step2, step1];
+        threeChordCell = [step3, step2, step1];
+        fourChordCell = [step4, step3, step2, step1];
+        break;
+      }
+
+      case 'chroma_step_down': {
+        // Chroma-Scale Step Down: Downward chromatic approach
+        step1 = this.side_step_above(targetChordX);
+        step2 = this.side_step_above(step1);
+        step3 = this.side_step_above(step2);
+        step4 = this.side_step_above(step3);
+        twoChordCell = [step2, step1];
+        threeChordCell = [step3, step2, step1];
+        fourChordCell = [step4, step3, step2, step1];
+        break;
+      }
+
+      case 'deceptive_cadence': {
+        // Deceptive Cadence: Cadence aims for V7 then resolves to vi7
+        const v7 = this.tonicize(targetChordX);
+        const vi7 = new Chord(this.transpose(targetChordX.root, 9, targetChordX.preferSharps), 'm7', null, targetChordX.preferSharps);
+        step1 = vi7;
+        step2 = v7;
+        step3 = this.add_related_two(v7);
+        step4 = this.side_step_above(v7);
+        twoChordCell = [v7, vi7];
+        threeChordCell = [step3, v7, vi7];
+        fourChordCell = [step4, step3, v7, vi7];
+        break;
+      }
+
+      case 'rhythmic_shifting': {
+        // Rhythmic Shifting: Anticipation / displacement of target arrival
+        const v7 = this.tonicize(targetChordX);
+        const ii7 = this.add_related_two(v7, isMin);
+        step1 = targetChordX;
+        step2 = v7;
+        step3 = ii7;
+        step4 = this.side_step_above(ii7);
+        twoChordCell = [v7, targetChordX];
+        threeChordCell = [ii7, v7, targetChordX];
+        fourChordCell = [step4, ii7, v7, targetChordX];
+        break;
+      }
+
       case 'circle_of_fifths':
       default: {
         // Pure extended Circle of 5ths dominant chain
@@ -826,6 +1111,11 @@ export class TargetBackwardEngine {
   static fillBarBeats(barGrid: BeatSlot[], chordsList: Chord[], splitMode: 'standard' | 'early' | 'late' = 'standard') {
     const len = barGrid.length;
     if (len === 0 || !chordsList || chordsList.length === 0) return;
+
+    // Harmonic Density Guardrail: If measure is short (< 4 beats), do not cram > 2 chords
+    if (len < 4 && chordsList.length > 2) {
+      chordsList = [chordsList[0], chordsList[chordsList.length - 1]];
+    }
 
     if (chordsList.length === 1) {
       for (let b = 0; b < len; b++) {
@@ -1065,10 +1355,27 @@ export class TargetBackwardEngine {
     origMeas: ChordBeatItem[],
     nextTargetChord: Chord,
     techniqueId: string,
-    subStyle: 'beat4_pickup' | 'beats34_single' | 'beats34_two_chord' | 'beats234_walk'
+    subStyle: 'beat4_pickup' | 'beats34_single' | 'beats34_two_chord' | 'beats234_walk',
+    isRunwayBar = false
   ) {
     const len = barGrid.length;
     if (len < 2 || !origMeas || origMeas.length === 0) return;
+
+    // Bar Duration & Complexity Check:
+    // If a measure contains 2 or more pre-existing chord changes, or has duration < 4 beats:
+    // strictly block multi-chord cells (like 3-step walks).
+    // The Runway Bar Rule:
+    // Dense multi-chord insertions (such as full ii7 - V7 cell replacements or 3-chord walks)
+    // are only permitted if:
+    // 1. The bar has a full 4-beat duration (or greater), AND
+    // 2. The bar is the immediate Runway Bar (index Target X - 1) leading into a cadence arrival.
+    const isCrowded = origMeas.length >= 2 || len < 4;
+    let safeSubStyle = subStyle;
+    if (!isRunwayBar || isCrowded) {
+      if (safeSubStyle === 'beats234_walk' || safeSubStyle === 'beats34_two_chord') {
+        safeSubStyle = isCrowded ? 'beat4_pickup' : 'beats34_single';
+      }
+    }
 
     const approachToNext = this.getApproachChords(nextTargetChord, techniqueId);
     const { step1, step2, step3, twoChordCell, fourChordCell } = approachToNext;
@@ -1078,7 +1385,7 @@ export class TargetBackwardEngine {
     if (origMeas.length === 1) {
       const baseChord = Chord.fromSymbol(origMeas[0].chord);
       if (len === 3) {
-        if (isTwoFiveTech || subStyle === 'beats34_two_chord' || subStyle === 'beats234_walk') {
+        if ((isTwoFiveTech || safeSubStyle === 'beats34_two_chord' || safeSubStyle === 'beats234_walk') && isRunwayBar) {
           this.fillBarBeats(barGrid, [baseChord, twoChordCell[0], twoChordCell[1]], 'standard');
         } else {
           this.fillBarBeats(barGrid, [baseChord, step1], 'late');
@@ -1088,22 +1395,25 @@ export class TargetBackwardEngine {
 
       // 4/4 time (len >= 4)
       if (isTwoFiveTech) {
-        if (this.isSideStepTwoFiveTech(techniqueId) && subStyle === 'beats234_walk') {
+        if (!isRunwayBar) {
+          // Non-runway: insert single passing chord approaching next bar without crowding
+          this.fillBarBeats(barGrid, [baseChord, step1], 'late');
+        } else if (this.isSideStepTwoFiveTech(techniqueId) && safeSubStyle === 'beats234_walk') {
           this.fillBarBeats(barGrid, fourChordCell, 'standard');
         } else {
-          // Always insert the complete [ii, V] pair on Beats 3 & 4 leading into nextTargetChord
+          // Immediate runway: insert the complete [ii, V] pair on Beats 3 & 4 leading into nextTargetChord
           this.fillBarBeats(barGrid, [baseChord, twoChordCell[0], twoChordCell[1]], 'standard');
         }
         return;
       }
 
-      if (subStyle === 'beat4_pickup') {
+      if (safeSubStyle === 'beat4_pickup') {
         // Keep baseChord on Beats 1, 2, 3; insert passing chord on Beat 4
         this.fillBarBeats(barGrid, [baseChord, step1], 'late');
-      } else if (subStyle === 'beats34_single') {
+      } else if (safeSubStyle === 'beats34_single') {
         // Keep baseChord on Beats 1 & 2; insert passing chord on Beats 3 & 4
         this.fillBarBeats(barGrid, [baseChord, step1], 'standard');
-      } else if (subStyle === 'beats34_two_chord') {
+      } else if (safeSubStyle === 'beats34_two_chord') {
         // Keep baseChord on Beats 1 & 2; insert 2-chord passing cell on Beats 3 & 4
         this.fillBarBeats(barGrid, [baseChord, twoChordCell[0], twoChordCell[1]], 'standard');
       } else {
@@ -1780,10 +2090,15 @@ export class TargetBackwardEngine {
     return (
       techniqueId === 'dorian_dark' ||
       techniqueId === 'chromatic_mediant' ||
+      techniqueId === 'flat_mediant_subs' ||
       techniqueId === 'gothic_dominant' ||
+      techniqueId === 'phrygian_dominant' ||
       techniqueId === 'neapolitan_slide' ||
       techniqueId === 'diminished_axis' ||
-      techniqueId === 'elfman_modulation'
+      techniqueId === 'common_tone_diminished' ||
+      techniqueId === 'elfman_modulation' ||
+      techniqueId === 'plagal_variant' ||
+      techniqueId === 'augmented_sixth'
     );
   }
 
@@ -2672,6 +2987,146 @@ export class TargetBackwardEngine {
           });
         }
 
+        case 'tenth_bass_spread': {
+          // Tenth Bass Spreads: Open 10th interval in the lower register
+          return meas.flatMap(item => {
+            const chord = Chord.fromSymbol(item.chord);
+            const tenthNote = chord.getThirdNote();
+            const apply =
+              stratNum === 1 ||
+              (stratNum === 2 && mIdx % 2 === 1) ||
+              (stratNum === 3 && mIdx > 0) ||
+              (stratNum >= 4 && mIdx !== measures.length - 1);
+            if (apply) {
+              return [{ chord: new Chord(chord.root, chord.quality, tenthNote, chord.preferSharps).toString(), beats: item.beats }];
+            }
+            return [{ ...item }];
+          });
+        }
+
+        case 'quartal_stack': {
+          // Quartal Harmony Stack & Polychords: 4th-interval stacks and suspended upper structures
+          return meas.flatMap(item => {
+            const chord = Chord.fromSymbol(item.chord);
+            const isMin = chord.isMinorTarget();
+            const apply =
+              stratNum === 1 ||
+              (stratNum === 2 && !isMin) ||
+              (stratNum === 3 && mIdx % 2 === 0) ||
+              (stratNum >= 4 && mIdx > 0);
+            if (apply) {
+              const qQual = isMin ? 'm11' : (chord.quality.includes('7') ? 'sus4' : 'add9');
+              return [{ chord: new Chord(chord.root, qQual, chord.bass, chord.preferSharps).toString(), beats: item.beats }];
+            }
+            return [{ ...item }];
+          });
+        }
+
+        case 'maj7_sharp11': {
+          // Major 7#11 Sub: Lydian #11 color on major tonic/predominant arrivals
+          return meas.flatMap(item => {
+            const chord = Chord.fromSymbol(item.chord);
+            const isMaj = !chord.isMinorTarget() && !chord.quality.includes('7');
+            if (isMaj && (stratNum === 1 || mIdx === measures.length - 1 || mIdx === 0 || stratNum >= 4)) {
+              return [{ chord: new Chord(chord.root, 'maj7#11', chord.bass, chord.preferSharps).toString(), beats: item.beats }];
+            }
+            return [{ ...item }];
+          });
+        }
+
+        case 'drop_voicing': {
+          // Drop 2 / Drop 3 Voicing: Inverted bass spreads (/5, /3)
+          return meas.flatMap((item, cIdx) => {
+            const chord = Chord.fromSymbol(item.chord);
+            const chosenBass = (mIdx + cIdx) % 2 === 0 ? chord.getThirdNote() : chord.getFifthNote();
+            return [{ chord: new Chord(chord.root, chord.quality, chosenBass, chord.preferSharps).toString(), beats: item.beats }];
+          });
+        }
+
+        case 'cascading_block': {
+          // Cascading Block Chords: Alternating 6th and diminished passing chord
+          return meas.flatMap(item => {
+            const chord = Chord.fromSymbol(item.chord);
+            if (item.beats >= 4) {
+              const half = Math.floor(item.beats / 2);
+              const dimRoot = transposeRoot(chord.root, 2, chord.preferSharps);
+              return [
+                { chord: new Chord(chord.root, chord.isMinorTarget() ? 'm6' : '6', chord.bass, chord.preferSharps).toString(), beats: half },
+                { chord: new Chord(dimRoot, '°7', null, chord.preferSharps).toString(), beats: item.beats - half }
+              ];
+            }
+            return [{ chord: new Chord(chord.root, chord.isMinorTarget() ? 'm6' : '6', chord.bass, chord.preferSharps).toString(), beats: item.beats }];
+          });
+        }
+
+        case 'chromatic_voice_leading': {
+          // Chromatic Voice Leading: Line cliché (5 -> #5 -> 6 -> b7)
+          return meas.flatMap(item => {
+            const chord = Chord.fromSymbol(item.chord);
+            if (item.beats >= 4) {
+              const half = Math.floor(item.beats / 2);
+              if (chord.isMinorTarget()) {
+                return [
+                  { chord: new Chord(chord.root, 'm', chord.bass, chord.preferSharps).toString(), beats: half },
+                  { chord: new Chord(chord.root, 'm(maj7)', chord.bass, chord.preferSharps).toString(), beats: item.beats - half }
+                ];
+              }
+              return [
+                { chord: new Chord(chord.root, 'maj', chord.bass, chord.preferSharps).toString(), beats: half },
+                { chord: new Chord(chord.root, '+', chord.bass, chord.preferSharps).toString(), beats: item.beats - half }
+              ];
+            }
+            return [{ ...item }];
+          });
+        }
+
+        case 'inner_voice_counterpoint': {
+          // Inner Voice Counterpoint: sus2 -> triad or triad -> add9
+          return meas.flatMap(item => {
+            const chord = Chord.fromSymbol(item.chord);
+            if (item.beats >= 4 && !chord.isMinorTarget()) {
+              const half = Math.floor(item.beats / 2);
+              return [
+                { chord: new Chord(chord.root, 'sus2', chord.bass, chord.preferSharps).toString(), beats: half },
+                { chord: new Chord(chord.root, 'maj', chord.bass, chord.preferSharps).toString(), beats: item.beats - half }
+              ];
+            }
+            return [{ ...item }];
+          });
+        }
+
+        case 'descending_bass': {
+          // Descending Bass Line: Scalar descending walk in the bass
+          return meas.flatMap(item => {
+            const chord = Chord.fromSymbol(item.chord);
+            const pitchSteps = [0, 11, 9, 7];
+            const bassNote = transposeRoot(tonicRoot, pitchSteps[mIdx % pitchSteps.length], chord.preferSharps);
+            return [{ chord: new Chord(chord.root, chord.quality, bassNote, chord.preferSharps).toString(), beats: item.beats }];
+          });
+        }
+
+        case 'relative_minor_exchange': {
+          // Relative Minor Exchange: Swap major with vi, or minor with relative major
+          return meas.flatMap(item => {
+            const chord = Chord.fromSymbol(item.chord);
+            const apply =
+              stratNum === 1 ||
+              (stratNum === 2 && mIdx % 2 === 1) ||
+              (stratNum === 3 && mIdx === 1) ||
+              (stratNum >= 4 && mIdx !== 0 && mIdx !== measures.length - 1);
+            if (apply) {
+              if (chord.isMinorTarget()) {
+                const relMajRoot = transposeRoot(chord.root, 3, chord.preferSharps);
+                return [{ chord: new Chord(relMajRoot, 'maj7', chord.bass, chord.preferSharps).toString(), beats: item.beats }];
+              } else {
+                const relMinRoot = transposeRoot(chord.root, 9, chord.preferSharps);
+                return [{ chord: new Chord(relMinRoot, 'm7', chord.bass, chord.preferSharps).toString(), beats: item.beats }];
+              }
+            }
+            return [{ ...item }];
+          });
+        }
+
         default:
           return meas.map(item => ({ ...item }));
       }
@@ -2813,7 +3268,14 @@ const DEFAULT_BASIC_PROGRESSIONS = [
   "C | G | Am | G",
   "C | F | C | G | C | F | G | C",
   "C | Dm7 | C7/E | F | F#dim7 | C/G | G7/B | C",
-  "C - Dm7 | C7/E - F | F#dim7 - C/G | G7/B - C"
+  "C - Dm7 | C7/E - F | F#dim7 - C/G | G7/B - C",
+  "Cmaj7 | Fmaj7",
+  "Am | G | C | F",
+  "C | C/B | Am7 | Fmaj7",
+  "C | G | Am | F",
+  "C | C/B | C/A | C/F",
+  "C | Em | F | G",
+  "C | Am | F | G"
 ];
 
 const DEFAULT_JAZZ_PROGRESSIONS = [
@@ -2826,7 +3288,18 @@ const DEFAULT_JAZZ_PROGRESSIONS = [
   "E7 | E7 | A7 | A7 | D7 | D7 | G7 | G7",
   "C7 | F7 | C7 | C7 | Dm7 | G7",
   "Cmaj7 | Dm7 | G7 | Cmaj7",
-  "Cmaj7 | Am7 | Dm7 | G7 | Em7 | Am7 | Dm7 | G7"
+  "Cmaj7 | Am7 | Dm7 | G7 | Em7 | Am7 | Dm7 | G7",
+  "Dm7 | G7 | Cmaj7",
+  "Am7 | Dm7 | G7 | Cmaj7",
+  "Fmaj7 | Em7 | Am7 | Dm7",
+  "Cmaj7 | C#dim7 | Dm7 | G7alt",
+  "Cmaj7 | Fmaj7 | G7alt | Am7",
+  "Fmaj7 | E7 | Ebmaj7 | D7",
+  "Cmaj7 | C#dim7 | Dm7 | D#dim7",
+  "D7 | F#m7 | Am7b5",
+  "Dm7 | Abdim7 | Em7 | Bbdim7/A",
+  "G | F7 | Bb7 | D7",
+  "Fmaj7 | Ab7 | Gm7add2 | C7b9 - F#7"
 ];
 
 const DEFAULT_SAVED_PROGRESSIONS = [
@@ -2839,13 +3312,42 @@ const DEFAULT_SAVED_PROGRESSIONS = [
   "Am | F | Dm | E | Am | Am",
   "Am | D | F | E",
   "Am | G | F | E | Am | Dm | E | Am",
-  "Am | Bb | E | Am"
+  "Am | Bb | E | Am",
+  "F | F/A | Bb | Bdim7 | F/C | C7 | F | F",
+  "Cm7 | Fm7",
+  "Cm | Ab | Eb | Bb",
+  "Am11 | D7 | F7 | C7",
+  "Em9 | Bm9 | Dm9 | Am9",
+  "Cmaj7 - B7 | B | Em | G7",
+  "Am | Dm9 | Em7 | A#dim",
+  "Am | G | F | E7",
+  "Am | D | G | Am"
+];
+
+const DEFAULT_NEOSOUL_PROGRESSIONS = [
+  "Dm7(add11) | Em7(add11) | Fmaj7",
+  "Dm11 | Ebmin11",
+  "Cm7 | Bmaj7 | Bbmin7 | Amaj7",
+  "Cm11 | Bm11 | Bbmin11 | Amin11",
+  "Cm9 | Dbmaj9 | F9 | Bmaj9",
+  "C9 | B7aug | Em7 | Dm7 | G13",
+  "Fm9 | Eb9 | Fm11 | C7b9",
+  "Cm9 | Cm11 | Bb9 | D7b9",
+  "Em11 | A13 | D9 | D#dim7",
+  "C6/9 | C6/9 | C6/9 | Bb9 | C9#11",
+  "C9 | Am9 | F9",
+  "Fm9 | Bb9sus4 | Bb/C | C7b9",
+  "Bb7 | Bb7/D | Eb7 | Eb9(#9)",
+  "Dm7 | C/E | Dm9 | Ab-6 | Am11 - Bb7sus | A7",
+  "Bbmaj7 | A7aug | Dm11 | Cm9 - F7add2",
+  "Am9 | Dm9 | G7sus2 | Cmaj9"
 ];
 
 const DEFAULT_PROGRESSIONS = [
   ...DEFAULT_BASIC_PROGRESSIONS,
   ...DEFAULT_JAZZ_PROGRESSIONS,
-  ...DEFAULT_SAVED_PROGRESSIONS
+  ...DEFAULT_SAVED_PROGRESSIONS,
+  ...DEFAULT_NEOSOUL_PROGRESSIONS
 ];
 
 // Maps odd-measure default progressions to their even-measure versions
@@ -3067,37 +3569,195 @@ function getDisplayedMeasures(): ChordBeatItem[][] {
 }
 
 // ============================================================================
-// REHARM SETS & STATE
+// 5-TIER HARMONIC NEIGHBORHOODS & TECHNIQUE DATABASE
 // ============================================================================
-const REHARM_SETS = {
-  basic: [
-    { id: 'default', name: 'Default', icon: 'I' },
-    { id: 'mu_major', name: 'Mu Major (add2 / μ)', icon: 'μ' },
-    { id: 'mu_inversion', name: 'Inverted Mu (add9/3rd)', icon: 'μ/3' },
-    { id: 'inner_sus', name: 'Inner Sus (sus4 → 3)', icon: 'sus4' },
-    { id: 'stepwise_inversion', name: 'Passing Inversion (/3, /5)', icon: '/3' },
-    { id: 'add9_triad', name: 'Add9 Exchange (add9)', icon: 'add9' },
-    { id: 'pedal_triads', name: 'Pedal Triads (Triads / Pedal)', icon: 'X/P' }
+export type HarmonicNeighborhood =
+  | 'color_texture'
+  | 'scalar_motion'
+  | 'cadential_approach'
+  | 'modal_tension'
+  | 'heavy_structural';
+
+export interface ReharmTechniqueItem {
+  id: string;
+  name: string;
+  icon: string;
+  tier: 1 | 2 | 3 | 4 | 5;
+  neighborhood: HarmonicNeighborhood;
+  type: 'single_chord_modifier' | 'inversion' | 'approach_cell' | 'modal' | 'heavy';
+  description?: string;
+}
+
+export const TECHNIQUE_DATABASE: Record<HarmonicNeighborhood, ReharmTechniqueItem[]> = {
+  color_texture: [
+    { id: 'default', name: 'Default Chords', icon: 'I', tier: 1, neighborhood: 'color_texture', type: 'single_chord_modifier' },
+    { id: 'mu_major', name: 'Mu Major / Moo Chord', icon: 'μ', tier: 1, neighborhood: 'color_texture', type: 'single_chord_modifier' },
+    { id: 'add9_triad', name: 'Add9 Triad Exchange', icon: 'add9', tier: 1, neighborhood: 'color_texture', type: 'single_chord_modifier' },
+    { id: 'pedal_triads', name: 'Pedal Point & Triads', icon: 'X/P', tier: 1, neighborhood: 'color_texture', type: 'single_chord_modifier' },
+    { id: 'tenth_bass_spread', name: 'Tenth Bass Spreads', icon: '10th', tier: 1, neighborhood: 'color_texture', type: 'single_chord_modifier' },
+    { id: 'quartal_stack', name: 'Quartal & Polychords', icon: '4ths', tier: 1, neighborhood: 'color_texture', type: 'single_chord_modifier' },
+    { id: 'maj7_sharp11', name: 'Major 7#11 (Lydian)', icon: 'Δ#11', tier: 1, neighborhood: 'color_texture', type: 'single_chord_modifier' },
+    { id: 'drop_voicing', name: 'Drop 2/3 Spread Voicing', icon: 'Drop', tier: 1, neighborhood: 'color_texture', type: 'inversion' },
+    { id: 'cascading_block', name: 'Cascading Block Chords', icon: 'Block', tier: 1, neighborhood: 'color_texture', type: 'inversion' }
   ],
-  jazz: [
-    { id: 'default', name: 'Default', icon: 'I' },
-    { id: 'tonicize', name: 'Tonicization / Tritone Sub', icon: 'V⁷/♭II⁷' },
-    { id: 'standard_two_five', name: 'ii-V (Std / Tritone / SS)', icon: 'ii-V⁷' },
-    { id: 'side_step_above', name: 'Side-Step (Above / Below)', icon: '↑↓' },
-    { id: 'circle_of_fifths', name: 'Circle of 5ths', icon: 'V/V' }
+  scalar_motion: [
+    { id: 'default', name: 'Default Chords', icon: 'I', tier: 2, neighborhood: 'scalar_motion', type: 'single_chord_modifier' },
+    { id: 'stepwise_inversion', name: 'Passing Inversion (/3, /5)', icon: '/3', tier: 2, neighborhood: 'scalar_motion', type: 'inversion' },
+    { id: 'mu_inversion', name: 'Inverted Mu (add9/3rd)', icon: 'μ/3', tier: 2, neighborhood: 'scalar_motion', type: 'inversion' },
+    { id: 'inner_sus', name: 'Inner Sus (sus4 → 3)', icon: 'sus4', tier: 2, neighborhood: 'scalar_motion', type: 'single_chord_modifier' },
+    { id: 'chromatic_voice_leading', name: 'Chromatic Voice Leading', icon: '5-6', tier: 2, neighborhood: 'scalar_motion', type: 'single_chord_modifier' },
+    { id: 'inner_voice_counterpoint', name: 'Inner Counterpoint', icon: 'Ctrpt', tier: 2, neighborhood: 'scalar_motion', type: 'single_chord_modifier' },
+    { id: 'descending_bass', name: 'Descending Bass Line', icon: '↘bass', tier: 2, neighborhood: 'scalar_motion', type: 'inversion' },
+    { id: 'relative_minor_exchange', name: 'Relative Minor Exchange', icon: 'vi-I', tier: 2, neighborhood: 'scalar_motion', type: 'single_chord_modifier' },
+    { id: 'half_diminished_shift', name: 'Half-Diminished Shift', icon: 'ø7', tier: 2, neighborhood: 'scalar_motion', type: 'approach_cell' }
   ],
-  dark: [
-    { id: 'default', name: 'Default', icon: 'I' },
-    { id: 'dorian_dark', name: 'Dorian Minor (i–IV / m6)', icon: 'i-IV' },
-    { id: 'chromatic_mediant', name: 'Chromatic Mediant (i–♭vi)', icon: '♭vi' },
-    { id: 'gothic_dominant', name: 'Gothic Cadence (V7♭9 / +)', icon: 'V⁷♭⁹' },
-    { id: 'neapolitan_slide', name: 'Phrygian Half-Step (♭II)', icon: '♭II' },
-    { id: 'diminished_axis', name: 'Diminished Axis (°7 / +)', icon: '°7' },
-    { id: 'elfman_modulation', name: 'Dark Modulation (m(maj7) / ±3)', icon: 'mΔ⁷' }
+  cadential_approach: [
+    { id: 'default', name: 'Default Chords', icon: 'I', tier: 3, neighborhood: 'cadential_approach', type: 'approach_cell' },
+    { id: 'standard_two_five', name: 'ii7 Addition (ii-V7)', icon: 'ii-V⁷', tier: 3, neighborhood: 'cadential_approach', type: 'approach_cell' },
+    { id: 'tonicize', name: 'Secondary Dominants (V7)', icon: 'V⁷/V', tier: 3, neighborhood: 'cadential_approach', type: 'approach_cell' },
+    { id: 'circle_of_fifths', name: 'Dominant Circle Cycle', icon: 'O5th', tier: 3, neighborhood: 'cadential_approach', type: 'approach_cell' },
+    { id: 'tritone_sub', name: 'Tritone Sub (♭II⁷)', icon: '♭II⁷', tier: 3, neighborhood: 'cadential_approach', type: 'approach_cell' },
+    { id: 'tritone_two_five', name: 'Tritone Sub ii-V', icon: '♭ii-V', tier: 3, neighborhood: 'cadential_approach', type: 'approach_cell' },
+    { id: 'backdoor_resolution', name: 'Backdoor Cadence (♭VII⁷)', icon: '♭VII⁷', tier: 3, neighborhood: 'cadential_approach', type: 'approach_cell' },
+    { id: 'dom_half_step_below', name: 'Dominant Half-Step Below', icon: 'VII⁷', tier: 3, neighborhood: 'cadential_approach', type: 'approach_cell' },
+    { id: 'whole_step_dominant', name: 'Whole-Step Dominants', icon: '♭VII', tier: 3, neighborhood: 'cadential_approach', type: 'approach_cell' },
+    { id: 'side_step_above', name: 'Side-Step ii-V', icon: '↑↓', tier: 3, neighborhood: 'cadential_approach', type: 'approach_cell' },
+    { id: 'altered_dominant_expansion', name: 'Altered Dominant Expansion', icon: '7alt', tier: 3, neighborhood: 'cadential_approach', type: 'approach_cell' },
+    { id: 'rootless_diminished_sub', name: 'Rootless Diminished Sub', icon: 'vii°⁷', tier: 3, neighborhood: 'cadential_approach', type: 'approach_cell' }
+  ],
+  modal_tension: [
+    { id: 'default', name: 'Default Chords', icon: 'I', tier: 4, neighborhood: 'modal_tension', type: 'modal' },
+    { id: 'dorian_dark', name: 'Modal Interchange (Dorian)', icon: 'i-IV', tier: 4, neighborhood: 'modal_tension', type: 'modal' },
+    { id: 'chromatic_mediant', name: 'Chromatic Mediant (♭vi)', icon: '♭vi', tier: 4, neighborhood: 'modal_tension', type: 'modal' },
+    { id: 'flat_mediant_subs', name: '♭III / ♭VI Major Subs', icon: '♭VIΔ', tier: 4, neighborhood: 'modal_tension', type: 'modal' },
+    { id: 'gothic_dominant', name: 'Gothic Cadence (V7♭9 / +)', icon: 'V⁷♭⁹', tier: 4, neighborhood: 'modal_tension', type: 'modal' },
+    { id: 'phrygian_dominant', name: 'Phrygian Dominant Shift', icon: 'Phryg', tier: 4, neighborhood: 'modal_tension', type: 'modal' },
+    { id: 'neapolitan_slide', name: 'Neapolitan Half-Step (♭II)', icon: '♭II', tier: 4, neighborhood: 'modal_tension', type: 'modal' },
+    { id: 'diminished_axis', name: 'Diminished Axis (°7 / +)', icon: '°7', tier: 4, neighborhood: 'modal_tension', type: 'modal' },
+    { id: 'common_tone_diminished', name: 'Common Tone Diminished', icon: 'I°7', tier: 4, neighborhood: 'modal_tension', type: 'modal' },
+    { id: 'elfman_modulation', name: 'Minor Major 7 Sub (mΔ⁷)', icon: 'mΔ⁷', tier: 4, neighborhood: 'modal_tension', type: 'modal' },
+    { id: 'plagal_variant', name: 'Minor Plagal Variant (iv-I)', icon: 'iv-I', tier: 4, neighborhood: 'modal_tension', type: 'modal' },
+    { id: 'augmented_sixth', name: 'Augmented Sixth (+6)', icon: '+6', tier: 4, neighborhood: 'modal_tension', type: 'modal' }
+  ],
+  heavy_structural: [
+    { id: 'default', name: 'Default Chords', icon: 'I', tier: 5, neighborhood: 'heavy_structural', type: 'heavy' },
+    { id: 'coltrane_changes', name: 'Coltrane Changes (Major 3rds)', icon: 'Coltrane', tier: 5, neighborhood: 'heavy_structural', type: 'heavy' },
+    { id: 'chromatic_planing', name: 'Chromatic Planing', icon: 'Planing', tier: 5, neighborhood: 'heavy_structural', type: 'heavy' },
+    { id: 'chroma_step_down', name: 'Chroma-Scale Step Down', icon: 'Chroma', tier: 5, neighborhood: 'heavy_structural', type: 'heavy' },
+    { id: 'deceptive_cadence', name: 'Deceptive Cadence', icon: 'Decept', tier: 5, neighborhood: 'heavy_structural', type: 'heavy' },
+    { id: 'rhythmic_shifting', name: 'Rhythmic Shifting', icon: 'Syncop', tier: 5, neighborhood: 'heavy_structural', type: 'heavy' }
   ]
 };
 
-const ALL_TECHNIQUES = [...REHARM_SETS.basic, ...REHARM_SETS.jazz, ...REHARM_SETS.dark];
+const ALL_TECHNIQUES: ReharmTechniqueItem[] = [
+  ...TECHNIQUE_DATABASE.color_texture,
+  ...TECHNIQUE_DATABASE.scalar_motion.filter(t => t.id !== 'default'),
+  ...TECHNIQUE_DATABASE.cadential_approach.filter(t => t.id !== 'default'),
+  ...TECHNIQUE_DATABASE.modal_tension.filter(t => t.id !== 'default'),
+  ...TECHNIQUE_DATABASE.heavy_structural.filter(t => t.id !== 'default')
+];
+
+const REHARM_SETS: Record<string, ReharmTechniqueItem[]> = {
+  ...TECHNIQUE_DATABASE,
+  all: ALL_TECHNIQUES,
+  // Legacy aliases for backward compatibility
+  basic: TECHNIQUE_DATABASE.color_texture,
+  jazz: TECHNIQUE_DATABASE.cadential_approach,
+  dark: TECHNIQUE_DATABASE.modal_tension
+};
+
+// ============================================================================
+// REHARM MASTER ENGINE (WEIGHTED NEIGHBORHOODS & DENSITY GUARDRAILS)
+// ============================================================================
+export class ReharmMasterEngine {
+  progression: ChordBeatItem[][];
+  timeSignature: string;
+
+  constructor(progression: ChordBeatItem[][], timeSignature = '4/4') {
+    this.progression = progression;
+    this.timeSignature = timeSignature;
+  }
+
+  static selectHarmonicNeighborhood(isCrowded = false): HarmonicNeighborhood {
+    if (isCrowded) {
+      // For crowded bars, restrict the randomizer to Tier 1 (Color & Texture) or Tier 2 (Scalar Inversions)
+      return Math.random() < 0.58 ? 'color_texture' : 'scalar_motion';
+    }
+    const roll = Math.random() * 100;
+    if (roll < 35) return 'color_texture';        // 35%
+    if (roll < 60) return 'scalar_motion';        // 25%
+    if (roll < 80) return 'cadential_approach';   // 20%
+    if (roll < 95) return 'modal_tension';        // 15%
+    return 'heavy_structural';                    // 5%
+  }
+
+  detectTargetX(): number {
+    const len = this.progression.length;
+    if (len === 0) return 0;
+    // Doubled-cadence heuristic or standard final bar fallback
+    if (len >= 4 && this.progression[len - 1]?.[0]?.chord === this.progression[len - 2]?.[0]?.chord) {
+      return len - 2;
+    }
+    return len - 1;
+  }
+
+  isBarCrowded(bar?: ChordBeatItem[]): boolean {
+    if (!bar || bar.length === 0) return false;
+    const totalBeats = bar.reduce((acc, c) => acc + c.beats, 0);
+    return bar.length >= 2 || totalBeats < 4;
+  }
+
+  getTechniquesForNeighborhood(neighborhood: HarmonicNeighborhood, isCrowded: boolean): ReharmTechniqueItem[] {
+    const pool = TECHNIQUE_DATABASE[neighborhood] || [];
+    const nonDefault = pool.filter(t => t.id !== 'default');
+    if (isCrowded) {
+      // Strip out heavy structural or multi-chord walks if space is tight
+      const filtered = nonDefault.filter(t => t.type === 'single_chord_modifier' || t.type === 'inversion');
+      return filtered.length > 0 ? filtered : nonDefault;
+    }
+    return nonDefault.length > 0 ? nonDefault : pool;
+  }
+
+  generateRandomReharm(forcedNeighborhood?: HarmonicNeighborhood | 'all'): {
+    technique: string;
+    strategy: string;
+    neighborhood: HarmonicNeighborhood;
+  } {
+    const targetIndex = this.detectTargetX();
+    const runwayBarIdx = targetIndex > 0 ? targetIndex - 1 : (this.progression.length > 1 ? this.progression.length - 2 : 0);
+    const runwayBar = this.progression[runwayBarIdx];
+    const isCrowded = this.isBarCrowded(runwayBar);
+
+    let neighborhood: HarmonicNeighborhood;
+    if (forcedNeighborhood && forcedNeighborhood !== 'all' && forcedNeighborhood in TECHNIQUE_DATABASE) {
+      neighborhood = forcedNeighborhood as HarmonicNeighborhood;
+      if (isCrowded && (neighborhood === 'heavy_structural' || neighborhood === 'cadential_approach')) {
+        neighborhood = 'scalar_motion';
+      }
+    } else {
+      neighborhood = ReharmMasterEngine.selectHarmonicNeighborhood(isCrowded);
+    }
+
+    const candidateTechs = this.getTechniquesForNeighborhood(neighborhood, isCrowded);
+    const chosenTech = candidateTechs[Math.floor(Math.random() * candidateTechs.length)] || candidateTechs[0];
+
+    const preservedStrategies = ['strategy1', 'strategy2', 'strategy3', 'strategy4', 'strategy5', 'strategy6'];
+    const replacementStrategies = ['strategy7', 'strategy8'];
+    const subVariants = TargetBackwardEngine.getSubVariantsForTechnique(chosenTech.id);
+
+    const wantsReplacement = Math.random() < 0.20 && !isCrowded;
+    const stratPool = wantsReplacement ? replacementStrategies : preservedStrategies;
+    const pickedBase = stratPool[Math.floor(Math.random() * stratPool.length)];
+    const pickedSv = subVariants[Math.floor(Math.random() * subVariants.length)];
+    const pickedStrat = subVariants.length > 1 ? `${pickedBase}@${pickedSv}` : pickedBase;
+
+    return {
+      technique: chosenTech.id,
+      strategy: pickedStrat,
+      neighborhood
+    };
+  }
+}
 
 function normalizeChordSymbol(sym: string): string {
   if (!sym || sym === '/' || sym === '|') return sym;
@@ -3121,6 +3781,12 @@ function normalizeProgressionString(rawStr: string): string {
     const afterColon = s.split(':').slice(1).join(':').trim();
     if (afterColon) s = afterColon;
   }
+  // Convert two-chord split slashes like Cmaj7/B7 or Am11/Bb7sus to intra-bar chords
+  s = s.replace(/([A-G][#b]?[^\s|/]*)\/([A-G][#b]?(?:7|m|maj|dim|aug|sus|9|11|13)[^\s|/]*)/g, '$1 - $2');
+
+  // Protect intra-bar chords in parentheses like (Cm9 - F7add2)
+  s = s.replace(/\(([^)]+)\)/g, (_, inside) => inside.replace(/\s+[-–—]\s+/g, ' '));
+
   s = s
     .replace(/\s*(?:->|→)\s*/g, ' | ')
     .replace(/\s+[-–—]\s+/g, ' | ')
@@ -3130,11 +3796,14 @@ function normalizeProgressionString(rawStr: string): string {
   const bars = s.split('|').map(b => b.trim()).filter(Boolean);
   const cleanedBars = bars.map(bar => {
     const toks = bar.split(/\s+/).filter(Boolean);
-    const nonSlash = toks.filter(t => t !== '/');
+    const nonSlash = toks.filter(t => t !== '/' && t !== '-' && t !== '–' && t !== '—');
     if (nonSlash.length === 1 && toks[0] !== '/') {
-      return normalizeChordSymbol(toks[0]);
+      return normalizeChordSymbol(nonSlash[0]);
     }
-    return toks.map(t => t === '/' ? '/' : normalizeChordSymbol(t)).join(' ');
+    return toks
+      .filter(t => t !== '-' && t !== '–' && t !== '—')
+      .map(t => t === '/' ? '/' : normalizeChordSymbol(t))
+      .join(' ');
   });
   return cleanedBars.join(' | ');
 }
@@ -3159,12 +3828,18 @@ function dedupeProgressions(list: string[]): string[] {
 
 function inferProgressionCategory(progStr: string): SavedSectionKey {
   if (!progStr) return 'basic';
-  const hasJazzQuality = /(maj7|Δ|m7b5|m7\(b5\)|7alt|7\(b9\)|7b9|7\+|m\(maj7\)|dim7|°7|ø|m6|9|11|13)/i.test(
+  const hasNeoSoulQuality = /(m11|min11|add11|maj9|Δ9|6\/9|9sus|7sus|#9|9#11|7aug|7\+|madd9|minadd9|add2|m7add2)/i.test(
+    progStr
+  );
+  if (hasNeoSoulQuality) return 'neosoul';
+  const hasDark = /(^|\s|\|)(Am|Cm|Dm|Em|Fm|Gm|Bbm|Abm|Ebm|C#m|F#m)(\s|\||$)/.test(progStr) || /(m6|-6|m\(maj7\))/i.test(progStr);
+  const hasJazzQuality = /(maj7|Δ|m7b5|m7\(b5\)|7alt|7\(b9\)|7b9|dim7|°7|ø|13)/i.test(
     progStr
   );
   if (hasJazzQuality) return 'jazz';
   const m7Matches = progStr.match(/[A-G][#b]?m7\b/g);
   if (m7Matches && m7Matches.length >= 2) return 'jazz';
+  if (hasDark) return 'dark';
   return 'basic';
 }
 
@@ -3174,6 +3849,7 @@ function migrateSavedSections(
   const defaultBasic = DEFAULT_BASIC_PROGRESSIONS.map(normalizeProgressionString);
   const defaultJazz = DEFAULT_JAZZ_PROGRESSIONS.map(normalizeProgressionString);
   const defaultDark = DEFAULT_SAVED_PROGRESSIONS.map(normalizeProgressionString);
+  const defaultNeoSoul = DEFAULT_NEOSOUL_PROGRESSIONS.map(normalizeProgressionString);
 
   if (
     !rawSections ||
@@ -3185,7 +3861,8 @@ function migrateSavedSections(
       sections: {
         basic: dedupeProgressions(defaultBasic),
         jazz: dedupeProgressions(defaultJazz),
-        dark: dedupeProgressions(defaultDark)
+        dark: dedupeProgressions(defaultDark),
+        neosoul: dedupeProgressions(defaultNeoSoul)
       },
       didMigrateJazzSplit: false
     };
@@ -3193,9 +3870,13 @@ function migrateSavedSections(
 
   const churchProgNew = "F | F/A | Bb | Bdim7 | F/C | C7 | F | F";
   const churchProgOld = "F | F/A | Bb | Bdim7 | F/C | C7";
-  let basicList = dedupeProgressions(rawSections.basic);
-  const jazzList = dedupeProgressions(rawSections.jazz);
-  let darkList = dedupeProgressions(rawSections.dark);
+  let basicList = dedupeProgressions([...rawSections.basic, ...defaultBasic]);
+  const jazzList = dedupeProgressions([...rawSections.jazz, ...defaultJazz]);
+  let darkList = dedupeProgressions([...rawSections.dark, ...defaultDark]);
+  const neosoulList = dedupeProgressions([
+    ...(Array.isArray(rawSections.neosoul) ? rawSections.neosoul : []),
+    ...defaultNeoSoul
+  ]);
   let didMigrateChurchToBasic = false;
 
   if (darkList.includes(churchProgNew) || darkList.includes(churchProgOld)) {
@@ -3210,7 +3891,8 @@ function migrateSavedSections(
     sections: {
       basic: basicList,
       jazz: jazzList,
-      dark: darkList
+      dark: darkList,
+      neosoul: neosoulList
     },
     didMigrateJazzSplit: didMigrateChurchToBasic
   };
@@ -3221,7 +3903,7 @@ function migrateBaseProgressionsPool(rawPool: unknown[] | undefined, didMigrateJ
   if (!Array.isArray(rawPool) || rawPool.length === 0) {
     return defaultPool;
   }
-  const cleaned = dedupeProgressions(rawPool.map(p => String(p)));
+  const cleaned = dedupeProgressions([...rawPool.map(p => String(p)), ...defaultPool]);
   if (didMigrateJazzSplit) {
     return dedupeProgressions([...cleaned, ...defaultPool]);
   }
@@ -3235,11 +3917,13 @@ function loadInitialVaultSync(): VaultPayload {
     savedSections: {
       basic: dedupeProgressions(DEFAULT_BASIC_PROGRESSIONS),
       jazz: dedupeProgressions(DEFAULT_JAZZ_PROGRESSIONS),
-      dark: dedupeProgressions(DEFAULT_SAVED_PROGRESSIONS)
+      dark: dedupeProgressions(DEFAULT_SAVED_PROGRESSIONS),
+      neosoul: dedupeProgressions(DEFAULT_NEOSOUL_PROGRESSIONS)
     },
     baseProgressionsPool: dedupeProgressions(DEFAULT_PROGRESSIONS),
     selectedEPModel: 'rhodes',
-    barsPerRow: 2,
+    barsPerRow: 1,
+    explicitLayoutSet: false,
     isBeatActive: true,
     bpm: 80
   };
@@ -3264,7 +3948,8 @@ function loadInitialVaultSync(): VaultPayload {
           savedSections: sections,
           baseProgressionsPool: migratedPool,
           selectedEPModel: parsed.selectedEPModel && EP_MODELS[parsed.selectedEPModel] ? parsed.selectedEPModel : 'rhodes',
-          barsPerRow: parsed.barsPerRow === 1 ? 1 : 2,
+          barsPerRow: parsed.explicitLayoutSet && parsed.barsPerRow === 2 ? 2 : 1,
+          explicitLayoutSet: !!parsed.explicitLayoutSet,
           isBeatActive: parsed.isBeatActive !== undefined ? parsed.isBeatActive : true,
           bpm: typeof parsed.bpm === 'number' && parsed.bpm >= 50 && parsed.bpm <= 220 ? parsed.bpm : 80
         };
@@ -3287,7 +3972,7 @@ const state = {
   userChangedBaseProgression: false,
   meter: 4,
   manualMeterOverride: false,
-  reharmSet: 'basic' as 'basic' | 'jazz' | 'dark',
+  reharmSet: 'all' as HarmonicNeighborhood | 'all' | 'basic' | 'jazz' | 'dark',
   selectedTechnique: 'default',
   selectedStrategy: 'strategy1',
   reharmMode: 'HYBRID' as ReharmMode,
@@ -3301,7 +3986,8 @@ const state = {
   activeSavedSection: null as SavedSectionKey | null,
   lastFormattedOutput: '',
   selectedEPModel: (initialVault.selectedEPModel || 'rhodes') as ElectricPianoModel,
-  barsPerRow: (initialVault.barsPerRow === 1 ? 1 : 2) as 1 | 2,
+  barsPerRow: (initialVault.explicitLayoutSet && initialVault.barsPerRow === 2 ? 2 : 1) as 1 | 2,
+  explicitLayoutSet: !!initialVault.explicitLayoutSet,
   isBeatActive: initialVault.isBeatActive !== undefined ? initialVault.isBeatActive : true,
   bpm: initialVault.bpm || 80,
   theme: initialVault.theme,
@@ -3339,6 +4025,7 @@ function persistVault() {
     baseProgressionsPool: state.baseProgressionsPool,
     selectedEPModel: state.selectedEPModel,
     barsPerRow: state.barsPerRow,
+    explicitLayoutSet: state.explicitLayoutSet,
     isBeatActive: state.isBeatActive,
     bpm: state.bpm
   };
@@ -3385,8 +4072,9 @@ async function syncAndHealVault() {
       audioEngine.setModel(state.selectedEPModel);
       updateTransportUI();
     }
-    if (newest.barsPerRow === 1 || newest.barsPerRow === 2) {
+    if (newest.explicitLayoutSet && (newest.barsPerRow === 1 || newest.barsPerRow === 2)) {
       state.barsPerRow = newest.barsPerRow;
+      state.explicitLayoutSet = true;
       updateLayoutToggleUI();
     }
     if (newest.isBeatActive !== undefined) {
@@ -3419,6 +4107,7 @@ async function syncAndHealVault() {
     baseProgressionsPool: state.baseProgressionsPool,
     selectedEPModel: state.selectedEPModel,
     barsPerRow: state.barsPerRow,
+    explicitLayoutSet: state.explicitLayoutSet,
     isBeatActive: state.isBeatActive,
     bpm: state.bpm
   };
@@ -3433,7 +4122,8 @@ function isProgressionSavedAnywhere(normProg: string): boolean {
   return (
     state.savedSections.basic.includes(normProg) ||
     state.savedSections.jazz.includes(normProg) ||
-    state.savedSections.dark.includes(normProg)
+    state.savedSections.dark.includes(normProg) ||
+    (state.savedSections.neosoul ? state.savedSections.neosoul.includes(normProg) : false)
   );
 }
 
@@ -3555,7 +4245,10 @@ function parseInputByMeasures(str: string): ChordBeatItem[][] {
     const chords: ChordBeatItem[] = [];
     let hasSlashInBar = false;
 
-    tokens.forEach(tok => {
+    tokens.forEach(rawTok => {
+      let tok = rawTok.trim().replace(/^\(|\)$/g, '');
+      if (!tok || tok === '-' || tok === '–' || tok === '—') return;
+
       if (/^\/+$/.test(tok)) {
         hasSlashInBar = true;
         const slashCount = tok.length;
@@ -3668,7 +4361,7 @@ function parseInputByMeasures(str: string): ChordBeatItem[][] {
 function formatChordHtml(str: string): string {
   if (!str) return '';
   return str.replace(
-    /\(maj7\)|7\(b5\)|\(b5\)|7alt|add2|add9|maj7|7b5|m11|dim7|dim|9sus4|7\(b9,b13\)|7\(b9\)|7\(#9\)|7\(#11\)|7\+|°7|Δ|ø|\+|7|9|11|13|6/g,
+    /6\/9|Δ#11|maj7#11|Δ9|maj9|\(maj7\)|7\(b5\)|\(b5\)|7alt|7#9|9#11|9sus4|7sus4|7sus2|7aug|add2|add9|maj7|7b5|m7\(add11\)|m7add2|m11|min11|m9|min9|dim7|dim|7\(b9,b13\)|7\(b9\)|7\(#9\)|7\(#11\)|7\+|°7|Δ|ø|\+6|\+|7|9|11|13|6/g,
     m => `<sup>${m}</sup>`
   );
 }
@@ -3762,26 +4455,52 @@ function updateLayoutToggleUI() {
 function updateReharmSetUI() {
   const techPopover = document.getElementById('reharmTechniquePopover');
   const badge = document.getElementById('reharmIconBadge');
+  const visualBtn = document.getElementById('reharmVisualBtn');
+
+  const setBtnAll = document.getElementById('setBtnAll');
+  const setBtnColorTexture = document.getElementById('setBtnColorTexture');
+  const setBtnScalarMotion = document.getElementById('setBtnScalarMotion');
+  const setBtnCadential = document.getElementById('setBtnCadential');
+  const setBtnModalTension = document.getElementById('setBtnModalTension');
+  const setBtnHeavyStructural = document.getElementById('setBtnHeavyStructural');
   const setBtnBasic = document.getElementById('setBtnBasic');
   const setBtnJazz = document.getElementById('setBtnJazz');
   const setBtnDark = document.getElementById('setBtnDark');
-  const visualBtn = document.getElementById('reharmVisualBtn');
 
-  const activeList = REHARM_SETS[state.reharmSet] || REHARM_SETS.basic;
+  const activeSetKey = state.reharmSet || 'all';
+  const activeList = activeSetKey === 'all'
+    ? ALL_TECHNIQUES
+    : (TECHNIQUE_DATABASE[activeSetKey as HarmonicNeighborhood] || ALL_TECHNIQUES);
+
   if (!activeList.some(t => t.id === state.selectedTechnique)) {
-    state.selectedTechnique = activeList[0].id;
+    state.selectedTechnique = activeList[0]?.id || 'default';
   }
 
   if (techPopover) {
+    const tierLabels: Record<number, string> = {
+      1: 'T1 Color',
+      2: 'T2 Scalar',
+      3: 'T3 Cadence',
+      4: 'T4 Modal',
+      5: 'T5 Heavy'
+    };
+
     techPopover.innerHTML = activeList
       .map(t => {
         const isSelected = t.id === state.selectedTechnique;
         const cls = isSelected
           ? 'bg-sky-600 text-white dark:bg-[#0c4a6e] dark:text-[#38bdf8]'
           : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#0c4a6e]/40';
+        const tierBadge = t.tier
+          ? `<span class="text-[9px] font-black uppercase tracking-wider px-1 py-0.5 rounded ${isSelected ? 'bg-white/20 text-white dark:text-[#38bdf8]' : 'bg-slate-200/70 dark:bg-white/10 text-slate-500 dark:text-slate-400'}">${tierLabels[t.tier] || `T${t.tier}`}</span>`
+          : '';
+
         return `
-          <button type="button" onclick="window.ReharmEngine.setReharmTechnique('${t.id}')" class="w-full px-3 py-2 rounded-[7px] flex items-center justify-between gap-3 text-xs font-mono-tabular font-extrabold transition-colors cursor-pointer text-left ${cls}">
-            <span class="truncate">${t.name}</span>
+          <button type="button" onclick="window.ReharmEngine.setReharmTechnique('${t.id}')" class="w-full px-2.5 py-1.5 rounded-[7px] flex items-center justify-between gap-2 text-xs font-mono-tabular font-extrabold transition-colors cursor-pointer text-left ${cls}">
+            <div class="flex items-center gap-1.5 min-w-0">
+              ${tierBadge}
+              <span class="truncate">${t.name}</span>
+            </div>
             <span class="text-[12px] font-black shrink-0">${t.icon}</span>
           </button>
         `;
@@ -3794,24 +4513,48 @@ function updateReharmSetUI() {
       activeList.find(t => t.id === state.selectedTechnique) ||
       ALL_TECHNIQUES.find(t => t.id === state.selectedTechnique) ||
       activeList[0];
-    badge.textContent = tech.icon;
-    badge.className = `font-mono-tabular font-black ${tech.icon.length > 4 ? 'text-[13px] sm:text-[14px]' : 'text-[16px]'} leading-none text-sky-600 dark:text-[#38bdf8] tracking-tight select-none pointer-events-none`;
+    badge.textContent = tech ? tech.icon : 'I';
+    badge.className = `font-mono-tabular font-black ${(tech?.icon?.length || 0) > 4 ? 'text-[13px] sm:text-[14px]' : 'text-[16px]'} leading-none text-sky-600 dark:text-[#38bdf8] tracking-tight select-none pointer-events-none`;
   }
 
   if (visualBtn) {
-    if (state.reharmSet === 'dark') {
+    if (activeSetKey === 'modal_tension' || activeSetKey === 'dark') {
       visualBtn.classList.add('border-sky-500', 'dark:border-[#38bdf8]/70');
     } else {
       visualBtn.classList.remove('border-sky-500', 'dark:border-[#38bdf8]/70');
     }
   }
 
-  if (setBtnBasic && setBtnJazz && setBtnDark) {
-    const activeCls = 'bg-sky-600 text-white dark:bg-[#0c4a6e] dark:text-[#38bdf8]';
-    const inactiveCls = 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-[#0c4a6e]/40';
-    setBtnBasic.className = `w-full px-3 py-2 rounded-[7px] flex items-center justify-between text-xs font-mono-tabular font-extrabold transition-colors cursor-pointer ${state.reharmSet === 'basic' ? activeCls : inactiveCls}`;
-    setBtnJazz.className = `w-full px-3 py-2 rounded-[7px] flex items-center justify-between text-xs font-mono-tabular font-extrabold transition-colors cursor-pointer ${state.reharmSet === 'jazz' ? activeCls : inactiveCls}`;
-    setBtnDark.className = `w-full px-3 py-2 rounded-[7px] flex items-center justify-between text-xs font-mono-tabular font-extrabold transition-colors cursor-pointer ${state.reharmSet === 'dark' ? activeCls : inactiveCls}`;
+  const activeCls = 'bg-sky-600 text-white dark:bg-[#0c4a6e] dark:text-[#38bdf8]';
+  const inactiveCls = 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-[#0c4a6e]/40';
+
+  if (setBtnAll) {
+    setBtnAll.className = `w-full px-3 py-1.5 rounded-[7px] flex items-center justify-between text-xs font-mono-tabular font-extrabold transition-colors cursor-pointer ${activeSetKey === 'all' ? activeCls : inactiveCls}`;
+  }
+  if (setBtnColorTexture) {
+    setBtnColorTexture.className = `w-full px-3 py-1.5 rounded-[7px] flex items-center justify-between text-xs font-mono-tabular font-extrabold transition-colors cursor-pointer ${(activeSetKey === 'color_texture' || activeSetKey === 'basic') ? activeCls : inactiveCls}`;
+  }
+  if (setBtnScalarMotion) {
+    setBtnScalarMotion.className = `w-full px-3 py-1.5 rounded-[7px] flex items-center justify-between text-xs font-mono-tabular font-extrabold transition-colors cursor-pointer ${activeSetKey === 'scalar_motion' ? activeCls : inactiveCls}`;
+  }
+  if (setBtnCadential) {
+    setBtnCadential.className = `w-full px-3 py-1.5 rounded-[7px] flex items-center justify-between text-xs font-mono-tabular font-extrabold transition-colors cursor-pointer ${(activeSetKey === 'cadential_approach' || activeSetKey === 'jazz') ? activeCls : inactiveCls}`;
+  }
+  if (setBtnModalTension) {
+    setBtnModalTension.className = `w-full px-3 py-1.5 rounded-[7px] flex items-center justify-between text-xs font-mono-tabular font-extrabold transition-colors cursor-pointer ${(activeSetKey === 'modal_tension' || activeSetKey === 'dark') ? activeCls : inactiveCls}`;
+  }
+  if (setBtnHeavyStructural) {
+    setBtnHeavyStructural.className = `w-full px-3 py-1.5 rounded-[7px] flex items-center justify-between text-xs font-mono-tabular font-extrabold transition-colors cursor-pointer ${activeSetKey === 'heavy_structural' ? activeCls : inactiveCls}`;
+  }
+
+  if (setBtnBasic) {
+    setBtnBasic.className = `w-full px-3 py-2 rounded-[7px] flex items-center justify-between text-xs font-mono-tabular font-extrabold transition-colors cursor-pointer ${(activeSetKey === 'color_texture' || activeSetKey === 'basic') ? activeCls : inactiveCls}`;
+  }
+  if (setBtnJazz) {
+    setBtnJazz.className = `w-full px-3 py-2 rounded-[7px] flex items-center justify-between text-xs font-mono-tabular font-extrabold transition-colors cursor-pointer ${(activeSetKey === 'cadential_approach' || activeSetKey === 'jazz') ? activeCls : inactiveCls}`;
+  }
+  if (setBtnDark) {
+    setBtnDark.className = `w-full px-3 py-2 rounded-[7px] flex items-center justify-between text-xs font-mono-tabular font-extrabold transition-colors cursor-pointer ${(activeSetKey === 'modal_tension' || activeSetKey === 'dark') ? activeCls : inactiveCls}`;
   }
 }
 
@@ -3969,12 +4712,13 @@ function renderSavedProgressionsList() {
     const sections: { key: SavedSectionKey; title: string; list: string[] }[] = [
       { key: 'basic', title: 'Basic', list: state.savedSections.basic },
       { key: 'jazz', title: 'Jazz', list: state.savedSections.jazz },
-      { key: 'dark', title: 'Dark', list: state.savedSections.dark }
+      { key: 'dark', title: 'Dark', list: state.savedSections.dark },
+      { key: 'neosoul', title: 'Neo-Soul', list: state.savedSections.neosoul || [] }
     ];
 
     const squareCardsHtml = sections
       .map(sec => {
-        const hasActiveProg = sec.list.some(p => normalizeProgressionString(p) === currentNorm);
+        const hasActiveProg = (sec.list || []).some(p => normalizeProgressionString(p) === currentNorm);
         const borderClass = hasActiveProg
           ? 'border-sky-500 bg-sky-50 dark:border-[#38bdf8] dark:bg-[#0c3b59]'
           : 'border-slate-300 dark:border-[#0c4a6e] bg-white dark:bg-[#071d2c] hover:border-sky-500/70 dark:hover:border-[#38bdf8]/60';
@@ -4000,14 +4744,17 @@ function renderSavedProgressionsList() {
       ? 'dark'
       : state.activeSavedSection === 'jazz'
         ? 'jazz'
-        : 'basic';
+        : state.activeSavedSection === 'neosoul'
+          ? 'neosoul'
+          : 'basic';
   const sectionTitles: Record<SavedSectionKey, string> = {
     basic: 'Basic',
     jazz: 'Jazz',
-    dark: 'Dark'
+    dark: 'Dark',
+    neosoul: 'Neo-Soul'
   };
   const secTitle = sectionTitles[secKey];
-  const otherKeys = (['basic', 'jazz', 'dark'] as SavedSectionKey[]).filter(k => k !== secKey);
+  const otherKeys = (['basic', 'jazz', 'dark', 'neosoul'] as SavedSectionKey[]).filter(k => k !== secKey);
   const list = state.savedSections[secKey] || [];
 
   const otherButtonsHtml = otherKeys
@@ -4555,6 +5302,9 @@ function updateTransportButtonActiveStates() {
 const ReharmEngine = {
   Chord,
   TargetBackwardEngine,
+  ReharmMasterEngine,
+  TECHNIQUE_DATABASE,
+  HarmonicNeighborhoods: ['color_texture', 'scalar_motion', 'cadential_approach', 'modal_tension', 'heavy_structural'],
 
   init() {
     applyThemeToDOM();
@@ -4883,10 +5633,20 @@ const ReharmEngine = {
     }
   },
 
-  selectReharmSet(setName: 'basic' | 'jazz' | 'dark') {
-    state.reharmSet = (setName === 'jazz' || setName === 'dark') ? setName : 'basic';
-    const list = REHARM_SETS[state.reharmSet];
-    const firstNonDefault = list.find(t => t.id !== 'default') || list[0];
+  selectReharmSet(setName: string) {
+    let mappedSet: HarmonicNeighborhood | 'all' = 'all';
+    if (setName === 'all') mappedSet = 'all';
+    else if (setName === 'color_texture' || setName === 'basic') mappedSet = 'color_texture';
+    else if (setName === 'scalar_motion') mappedSet = 'scalar_motion';
+    else if (setName === 'cadential_approach' || setName === 'jazz') mappedSet = 'cadential_approach';
+    else if (setName === 'modal_tension' || setName === 'dark') mappedSet = 'modal_tension';
+    else if (setName === 'heavy_structural') mappedSet = 'heavy_structural';
+
+    state.reharmSet = mappedSet;
+    const activeList = mappedSet === 'all'
+      ? ALL_TECHNIQUES
+      : (TECHNIQUE_DATABASE[mappedSet] || ALL_TECHNIQUES);
+    const firstNonDefault = activeList.find(t => t.id !== 'default') || activeList[0];
     state.selectedTechnique = firstNonDefault.id;
     state.selectedStrategy = 'strategy1';
     state.reharmActive = state.selectedTechnique !== 'default';
@@ -4904,15 +5664,18 @@ const ReharmEngine = {
     const inBasicIdx = state.savedSections.basic.indexOf(normOut);
     const inJazzIdx = state.savedSections.jazz.indexOf(normOut);
     const inDarkIdx = state.savedSections.dark.indexOf(normOut);
+    const inNeoSoulIdx = state.savedSections.neosoul ? state.savedSections.neosoul.indexOf(normOut) : -1;
 
-    if (inBasicIdx !== -1 || inJazzIdx !== -1 || inDarkIdx !== -1) {
+    if (inBasicIdx !== -1 || inJazzIdx !== -1 || inDarkIdx !== -1 || inNeoSoulIdx !== -1) {
       if (inBasicIdx !== -1) state.savedSections.basic.splice(inBasicIdx, 1);
       if (inJazzIdx !== -1) state.savedSections.jazz.splice(inJazzIdx, 1);
       if (inDarkIdx !== -1) state.savedSections.dark.splice(inDarkIdx, 1);
+      if (inNeoSoulIdx !== -1 && state.savedSections.neosoul) state.savedSections.neosoul.splice(inNeoSoulIdx, 1);
     } else {
       const targetSec: SavedSectionKey =
         state.activeSavedSection ||
-        (state.reharmSet === 'dark' ? 'dark' : inferProgressionCategory(normOut));
+        (state.reharmSet === 'modal_tension' || state.reharmSet === 'dark' ? 'dark' : inferProgressionCategory(normOut));
+      if (!state.savedSections[targetSec]) state.savedSections[targetSec] = [];
       state.savedSections[targetSec].unshift(normOut);
     }
     persistVault();
@@ -4923,7 +5686,13 @@ const ReharmEngine = {
   openSavedSection(secKey: SavedSectionKey) {
     if (Date.now() < justSwipedUntil) return;
     state.activeSavedSection =
-      secKey === 'dark' ? 'dark' : secKey === 'jazz' ? 'jazz' : 'basic';
+      secKey === 'dark'
+        ? 'dark'
+        : secKey === 'jazz'
+          ? 'jazz'
+          : secKey === 'neosoul'
+            ? 'neosoul'
+            : 'basic';
     state.editingSavedKey = null;
     renderSavedProgressionsList();
   },
@@ -4946,7 +5715,8 @@ const ReharmEngine = {
       const prevDefault = getDefaultBaseProgression();
       const targetSec: SavedSectionKey =
         state.activeSavedSection ||
-        (state.reharmSet === 'dark' ? 'dark' : inferProgressionCategory(formatted));
+        (state.reharmSet === 'modal_tension' || state.reharmSet === 'dark' ? 'dark' : inferProgressionCategory(formatted));
+      if (!state.savedSections[targetSec]) state.savedSections[targetSec] = [];
       if (!state.savedSections[targetSec].includes(formatted)) {
         state.savedSections[targetSec].unshift(formatted);
         if (
@@ -5286,34 +6056,10 @@ const ReharmEngine = {
     }
   },
 
-  // Randomize ALWAYS reharmonizes from a fresh parse of state.baseProgression
+  // Randomize ALWAYS reharmonizes from a fresh parse of state.baseProgression using ReharmMasterEngine
   randomize() {
     const baseMeasures = parseInputByMeasures(state.baseProgression);
     if (!baseMeasures || baseMeasures.length === 0) return;
-
-    // If user is on Default ('default') and taps Randomize, activate the first reharm technique of the current set
-    if (state.selectedTechnique === 'default') {
-      const activeList = REHARM_SETS[state.reharmSet] || REHARM_SETS.basic;
-      const firstTech = activeList.find(t => t.id !== 'default') || activeList[0];
-      state.selectedTechnique = firstTech.id;
-      updateReharmSetUI();
-    }
-
-    const preservedStrategies = [
-      'strategy1',
-      'strategy2',
-      'strategy3',
-      'strategy4',
-      'strategy5',
-      'strategy6'
-    ];
-    const replacementStrategies = [
-      'strategy7',
-      'strategy8'
-    ];
-    const allStrategies = [...preservedStrategies, ...replacementStrategies];
-
-    const subVariants = TargetBackwardEngine.getSubVariantsForTechnique(state.selectedTechnique);
 
     const serializeMeasures = (mList: ChordBeatItem[][]) =>
       mList.map(m => m.map(c => `${c.chord}:${c.beats}:${c.isTurnaround ? 1 : 0}`).join(',')).join('|');
@@ -5329,55 +6075,47 @@ const ReharmEngine = {
       : baseMeasures;
     const currentSig = serializeMeasures(currentDisplayed);
 
-    state.reharmActive = true;
+    const mapSetToNeighborhood = (s: string): HarmonicNeighborhood | 'all' => {
+      if (s === 'all') return 'all';
+      if (s === 'color_texture' || s === 'basic') return 'color_texture';
+      if (s === 'scalar_motion') return 'scalar_motion';
+      if (s === 'cadential_approach' || s === 'jazz') return 'cadential_approach';
+      if (s === 'modal_tension' || s === 'dark') return 'modal_tension';
+      if (s === 'heavy_structural') return 'heavy_structural';
+      return 'all';
+    };
+    const forcedNeighborhood = mapSetToNeighborhood(state.reharmSet || 'all');
+    const masterEngine = new ReharmMasterEngine(baseMeasures, `${state.meter || 4}/4`);
 
-    // Group candidate sub-variants by base strategy (strategy1..strategy8)
-    // so the structural rate at which reharms occur is 100% preserved!
-    const validSubVariantsByBaseStrat = new Map<string, string[]>();
-    allStrategies.forEach(baseStrat => {
-      const seenSigsForStrat = new Set<string>();
-      const validList: string[] = [];
-      subVariants.forEach(sv => {
-        const stratKey = subVariants.length > 1 ? `${baseStrat}@${sv}` : baseStrat;
-        const freshBase = parseInputByMeasures(state.baseProgression);
-        const out = TargetBackwardEngine.executeReharm(
-          freshBase,
-          state.selectedTechnique,
-          stratKey,
-          opts
-        );
-        const sig = serializeMeasures(out);
-        if (sig !== currentSig && !seenSigsForStrat.has(sig)) {
-          seenSigsForStrat.add(sig);
-          validList.push(stratKey);
-        }
-      });
-      if (validList.length > 0) {
-        validSubVariantsByBaseStrat.set(baseStrat, validList);
-      }
-    });
+    // Duplication Filter Guard:
+    // Before rendering a reharm to the UI or audio engine, run a signature comparison
+    // against the currently displayed chords. If the resulting beat slot array matches the
+    // current state identically, force a re-roll until a genuinely distinct harmonic variation is achieved.
+    let bestResult = masterEngine.generateRandomReharm(forcedNeighborhood);
+    let bestMeasures = TargetBackwardEngine.executeReharm(
+      parseInputByMeasures(state.baseProgression),
+      bestResult.technique,
+      bestResult.strategy,
+      opts
+    );
+    let attempts = 0;
 
-    const candidateBaseStrats = Array.from(validSubVariantsByBaseStrat.keys());
-    if (candidateBaseStrats.length > 0) {
-      // 80/20 ratio: 80% preserved base chords with altered beats & passing chords; 20% limited replacement
-      const wantsReplacement = Math.random() < 0.20;
-      const preferredPool = wantsReplacement ? replacementStrategies : preservedStrategies;
-      const matchedCandidates = candidateBaseStrats.filter(s => preferredPool.includes(s));
-      const poolToPick = matchedCandidates.length > 0 ? matchedCandidates : candidateBaseStrats;
-
-      const pickedBase = poolToPick[Math.floor(Math.random() * poolToPick.length)];
-      const variantsForBase = validSubVariantsByBaseStrat.get(pickedBase)!;
-      const pickedFullStrat = variantsForBase[Math.floor(Math.random() * variantsForBase.length)];
-      state.selectedStrategy = pickedFullStrat;
-    } else {
-      const wantsReplacement = Math.random() < 0.20;
-      const fallbackPool = wantsReplacement ? replacementStrategies : preservedStrategies;
-      state.strategyCycleIndex = (state.strategyCycleIndex + 1) % fallbackPool.length;
-      const fallbackBase = fallbackPool[state.strategyCycleIndex];
-      const fallbackSv = subVariants[Math.floor(Math.random() * subVariants.length)];
-      state.selectedStrategy = subVariants.length > 1 ? `${fallbackBase}@${fallbackSv}` : fallbackBase;
+    while (serializeMeasures(bestMeasures) === currentSig && attempts < 15) {
+      attempts++;
+      bestResult = masterEngine.generateRandomReharm(forcedNeighborhood);
+      bestMeasures = TargetBackwardEngine.executeReharm(
+        parseInputByMeasures(state.baseProgression),
+        bestResult.technique,
+        bestResult.strategy,
+        opts
+      );
     }
 
+    state.reharmActive = true;
+    state.selectedTechnique = bestResult.technique;
+    state.selectedStrategy = bestResult.strategy;
+
+    updateReharmSetUI();
     renderOutput();
   },
 
@@ -5390,6 +6128,7 @@ const ReharmEngine = {
 
   toggleLayoutColumns() {
     state.barsPerRow = state.barsPerRow === 1 ? 2 : 1;
+    state.explicitLayoutSet = true;
     updateLayoutToggleUI();
     renderOutput();
     persistVault();
