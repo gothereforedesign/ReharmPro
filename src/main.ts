@@ -60,6 +60,8 @@ export interface ReharmExecutionOptions {
   meter?: number;
   loopTargetChord?: Chord;
   disableTurnaround?: boolean;
+  allowFunctionalSubstitution?: boolean;
+  allowAdaptiveTarget?: boolean;
 }
 
 export type SavedSectionKey = 'basic' | 'jazz' | 'dark' | 'neosoul';
@@ -1176,6 +1178,273 @@ export class TargetBackwardEngine {
     return new Chord(defaultDomRoot, '7', null, preferSharp);
   }
 
+  // ============================================================================
+  // MODULE 1: FUNCTIONAL KEY & HARMONIC ANALYSIS MODULE
+  // Infers the primary key center (Tonic, Subdominant, Dominant functions)
+  // from the chords in the progression.
+  // ============================================================================
+  static inferKeyCenter(measures: ChordBeatItem[][]): { tonicRoot: string; isMinor: boolean } {
+    if (!measures || measures.length === 0 || !measures[0] || measures[0].length === 0) {
+      return { tonicRoot: 'C', isMinor: false };
+    }
+
+    const firstChord = Chord.fromSymbol(measures[0][0].chord);
+    const lastMeasure = measures[measures.length - 1];
+    const lastChord = lastMeasure && lastMeasure.length > 0 ? Chord.fromSymbol(lastMeasure[lastMeasure.length - 1].chord) : firstChord;
+
+    // Tally pitch classes and qualities across the progression
+    const rootTally: Record<string, number> = {};
+    let minorWeight = 0;
+    let majorWeight = 0;
+
+    measures.forEach(meas => {
+      meas.forEach(item => {
+        const c = Chord.fromSymbol(item.chord);
+        rootTally[c.root] = (rootTally[c.root] || 0) + item.beats;
+        if (c.isMinorTarget()) {
+          minorWeight += item.beats;
+        } else {
+          majorWeight += item.beats;
+        }
+      });
+    });
+
+    // Check cadence resolution: if last chord or first chord is prominent
+    let tonicRoot = firstChord.root;
+    if (lastChord.root === firstChord.root) {
+      tonicRoot = firstChord.root;
+    } else {
+      // Find root with highest weighted beat count
+      let highestBeats = 0;
+      for (const [r, beats] of Object.entries(rootTally)) {
+        if (beats > highestBeats) {
+          highestBeats = beats;
+          tonicRoot = r;
+        }
+      }
+    }
+
+    const isMinor = firstChord.isMinorTarget() || minorWeight > majorWeight;
+    return { tonicRoot, isMinor };
+  }
+
+  static getHarmonicFunction(chord: Chord, tonicRoot: string, isMinorKey = false): 'TONIC' | 'SUBDOMINANT' | 'DOMINANT' | 'MODAL_OTHER' {
+    const tonicPitch = NOTE_TO_PITCH[tonicRoot] ?? 0;
+    const chordPitch = NOTE_TO_PITCH[chord.root] ?? 0;
+    const interval = ((chordPitch - tonicPitch) % 12 + 12) % 12;
+
+    if (!isMinorKey) {
+      // Major Key:
+      // I (0), vi (9), iii (4) -> TONIC FAMILY
+      if (interval === 0 && !chord.quality.includes('7') && chord.quality !== '7') return 'TONIC';
+      if (interval === 0 && (chord.quality === 'maj7' || chord.quality === 'maj9' || chord.quality === '6' || chord.quality === '6/9' || chord.quality === 'maj')) return 'TONIC';
+      if (interval === 9 && (chord.quality === 'm' || chord.quality === 'm7' || chord.quality === 'm9' || chord.quality === 'm11')) return 'TONIC';
+      if (interval === 4 && (chord.quality === 'm' || chord.quality === 'm7' || chord.quality === 'm9')) return 'TONIC';
+
+      // IV (5), ii (2), iv (5 minor) -> SUBDOMINANT FAMILY
+      if (interval === 5 && !chord.quality.includes('7') && chord.quality !== '7') return 'SUBDOMINANT';
+      if (interval === 5 && (chord.quality === 'maj7' || chord.quality === 'maj9' || chord.quality === 'maj' || chord.quality === 'm' || chord.quality === 'm7' || chord.quality === 'm6')) return 'SUBDOMINANT';
+      if (interval === 2 && (chord.quality === 'm' || chord.quality === 'm7' || chord.quality === 'm9' || chord.quality === 'm11' || chord.quality === 'm7b5')) return 'SUBDOMINANT';
+
+      // V (7), vii° (11), bII7 (1) -> DOMINANT FAMILY
+      if (interval === 7 && (chord.quality.includes('7') || chord.quality === '7' || chord.quality === '9' || chord.quality === '13' || chord.quality === '7alt' || chord.quality === 'maj')) return 'DOMINANT';
+      if (interval === 11 && (chord.quality === '°7' || chord.quality === 'm7b5' || chord.quality === 'dim')) return 'DOMINANT';
+      if (interval === 1 && (chord.quality === '7' || chord.quality === '7alt')) return 'DOMINANT';
+    } else {
+      // Minor Key:
+      // i (0), bIII (3), bVI (8) -> TONIC FAMILY
+      if (interval === 0 && chord.isMinorTarget()) return 'TONIC';
+      if (interval === 3 && !chord.isMinorTarget()) return 'TONIC';
+      if (interval === 8 && !chord.isMinorTarget()) return 'TONIC';
+
+      // iv (5), iiø (2) -> SUBDOMINANT FAMILY
+      if (interval === 5 && chord.isMinorTarget()) return 'SUBDOMINANT';
+      if (interval === 2 && (chord.quality === 'm7b5' || chord.quality === 'm7' || chord.quality === '°7')) return 'SUBDOMINANT';
+
+      // V7 (7), vii° (11), bII (1) -> DOMINANT FAMILY
+      if (interval === 7 && (chord.quality === '7' || chord.quality === '7(b9)' || chord.quality === '7alt')) return 'DOMINANT';
+      if (interval === 11 && (chord.quality === '°7' || chord.quality === 'm7b5')) return 'DOMINANT';
+      if (interval === 1 && (chord.quality === '7' || chord.quality === 'maj')) return 'DOMINANT';
+    }
+
+    return 'MODAL_OTHER';
+  }
+
+  // ============================================================================
+  // MODULE 2: FUNCTIONAL SUBSTITUTION ENGINE
+  // Creatively swaps base chords for functionally equivalent alternatives
+  // (e.g. I -> vi or iii; IV -> ii7; V -> bII7 or vii°7)
+  // ============================================================================
+  static getFunctionalSubstitutions(chord: Chord, tonicRoot: string, isMinorKey = false): Chord[] {
+    const tonicPitch = NOTE_TO_PITCH[tonicRoot] ?? 0;
+    const chordPitch = NOTE_TO_PITCH[chord.root] ?? 0;
+    const interval = ((chordPitch - tonicPitch) % 12 + 12) % 12;
+    const preferSharp = chord.preferSharps ?? SHARP_ROOTS.has(tonicRoot);
+    const subs: Chord[] = [];
+
+    if (!isMinorKey) {
+      // Tonic Family Swaps (I -> vi, iii, I6/9, Imaj9)
+      if (interval === 0 && !chord.isMinorTarget()) {
+        const viRoot = this.transpose(tonicRoot, 9, preferSharp);
+        const iiiRoot = this.transpose(tonicRoot, 4, preferSharp);
+        subs.push(new Chord(viRoot, 'm7', null, preferSharp));      // Relative minor vi7
+        subs.push(new Chord(iiiRoot, 'm7', null, preferSharp));     // Mediant minor iii7
+        subs.push(new Chord(chord.root, '6/9', null, preferSharp));  // Extended warm color
+        subs.push(new Chord(chord.root, 'maj9', null, preferSharp)); // Lush jazz color
+      } else if (interval === 9 && chord.isMinorTarget()) {
+        // vi -> Imaj7 or iii7
+        subs.push(new Chord(tonicRoot, 'maj7', null, preferSharp));
+        const iiiRoot = this.transpose(tonicRoot, 4, preferSharp);
+        subs.push(new Chord(iiiRoot, 'm7', null, preferSharp));
+      } else if (interval === 4 && chord.isMinorTarget()) {
+        // iii -> Imaj7 or vi7
+        subs.push(new Chord(tonicRoot, 'maj7', null, preferSharp));
+        const viRoot = this.transpose(tonicRoot, 9, preferSharp);
+        subs.push(new Chord(viRoot, 'm7', null, preferSharp));
+      }
+
+      // Subdominant Family Swaps (IV -> ii7, ivm6, IVmaj9)
+      if (interval === 5 && !chord.isMinorTarget()) {
+        const iiRoot = this.transpose(tonicRoot, 2, preferSharp);
+        subs.push(new Chord(iiRoot, 'm7', null, preferSharp));        // Relative supertonic ii7
+        subs.push(new Chord(iiRoot, 'm9', null, preferSharp));        // Extended ii9
+        subs.push(new Chord(chord.root, 'm6', null, false));          // Minor subdominant ivm6 (borrowed)
+        subs.push(new Chord(chord.root, 'maj9', null, preferSharp));  // Lydian color IVmaj9
+      } else if (interval === 2 && chord.isMinorTarget()) {
+        // ii7 -> IVmaj7 or ivm6
+        const ivRoot = this.transpose(tonicRoot, 5, preferSharp);
+        subs.push(new Chord(ivRoot, 'maj7', null, preferSharp));
+        subs.push(new Chord(ivRoot, 'm6', null, false));
+      }
+
+      // Dominant Family Swaps (V7 -> bII7 tritone sub, vii°7, V7alt)
+      if (interval === 7) {
+        const biiRoot = this.transpose(tonicRoot, 1, false);
+        const viiRoot = this.transpose(tonicRoot, 11, preferSharp);
+        subs.push(new Chord(biiRoot, '7', null, false));              // Tritone sub bII7
+        subs.push(new Chord(viiRoot, '°7', null, preferSharp));       // Leading tone diminished vii°7
+        subs.push(new Chord(chord.root, '7alt', null, preferSharp));  // Altered dominant V7alt
+        subs.push(new Chord(chord.root, '7#9', null, preferSharp));   // Hendrix dominant V7#9
+      }
+    } else {
+      // Minor Key Tonic Swaps (i -> bVI, bIII, im9)
+      if (interval === 0 && chord.isMinorTarget()) {
+        const bviRoot = this.transpose(tonicRoot, 8, false);
+        const biiiRoot = this.transpose(tonicRoot, 3, false);
+        subs.push(new Chord(bviRoot, 'maj7', null, false));
+        subs.push(new Chord(biiiRoot, 'maj7', null, false));
+        subs.push(new Chord(chord.root, 'm9', null, preferSharp));
+      }
+      // Minor Subdominant Swaps (iv -> iiø7, IV7)
+      if (interval === 5 && chord.isMinorTarget()) {
+        const iihalfRoot = this.transpose(tonicRoot, 2, preferSharp);
+        subs.push(new Chord(iihalfRoot, 'm7b5', null, preferSharp));
+        subs.push(new Chord(chord.root, '7', null, preferSharp));     // Dorian IV7
+      }
+    }
+
+    return subs;
+  }
+
+  /**
+   * Applies functional substitutions to non-locked measures before reharmonization.
+   * Can swap 1 or 2 chords in the progression for functional equivalents.
+   */
+  static applyFunctionalSubstitutions(
+    measures: ChordBeatItem[][],
+    lockedMeasures: number[] = [],
+    maxSwaps = 1
+  ): ChordBeatItem[][] {
+    if (!measures || measures.length === 0) return measures;
+    const { tonicRoot, isMinor } = this.inferKeyCenter(measures);
+    const lockedSet = new Set(lockedMeasures);
+    const numMeasures = measures.length;
+
+    // Collect eligible measures (exclude locked measures; avoid changing measure 0 if it's the anchor unless 4+ bars)
+    const eligibleIndices: { mIdx: number; cIdx: number; chord: Chord }[] = [];
+    measures.forEach((meas, mIdx) => {
+      if (lockedSet.has(mIdx)) return;
+      meas.forEach((item, cIdx) => {
+        const cObj = Chord.fromSymbol(item.chord);
+        const subs = this.getFunctionalSubstitutions(cObj, tonicRoot, isMinor);
+        if (subs.length > 0) {
+          eligibleIndices.push({ mIdx, cIdx, chord: cObj });
+        }
+      });
+    });
+
+    if (eligibleIndices.length === 0) return measures;
+
+    // Shuffle and pick up to maxSwaps
+    const shuffled = [...eligibleIndices].sort(() => Math.random() - 0.5);
+    const chosen = shuffled.slice(0, Math.min(maxSwaps, shuffled.length));
+
+    const clonedMeasures: ChordBeatItem[][] = measures.map(m => m.map(c => ({ ...c })));
+    chosen.forEach(target => {
+      const subs = this.getFunctionalSubstitutions(target.chord, tonicRoot, isMinor);
+      if (subs.length > 0) {
+        const pickedSub = subs[Math.floor(Math.random() * subs.length)];
+        clonedMeasures[target.mIdx][target.cIdx].chord = pickedSub.toString();
+      }
+    });
+
+    return clonedMeasures;
+  }
+
+  // ============================================================================
+  // MODULE 3: ADAPTIVE TARGET & RUNWAY ACCOMMODATION
+  // Dynamically adapts the landing target chord's voicing, quality, or extensions
+  // to achieve maximum harmonic cohesion with the incoming runway approach cell.
+  // ============================================================================
+  static adaptTargetChord(targetChord: Chord, approachTechnique: string): Chord {
+    const isMin = targetChord.isMinorTarget();
+    const useSharp = targetChord.preferSharps ?? SHARP_ROOTS.has(targetChord.root);
+
+    // Case 1: Backdoor dominant approach (bVII7 -> Target)
+    // Backdoor resolution resolves smoothly to Major 6th, 6/9, or Major 9th rather than harsh triad
+    if (approachTechnique === 'backdoor_resolution' || approachTechnique === 'backdoor') {
+      if (!isMin) {
+        // bVII7 -> I6/9 or Imaj9 sounds iconic and silky
+        return new Chord(targetChord.root, targetChord.quality === 'maj' ? '6/9' : 'maj9', targetChord.bass, useSharp);
+      } else {
+        return new Chord(targetChord.root, 'm9', targetChord.bass, useSharp);
+      }
+    }
+
+    // Case 2: Tritone Sub approach (bII7 -> Target)
+    // Semitone slide resolves gorgeously to Major 7th, 6th, or m9
+    if (approachTechnique === 'tritone_sub' || approachTechnique === 'tritone_two_five') {
+      if (!isMin) {
+        return new Chord(targetChord.root, targetChord.quality === 'maj' ? 'maj7' : '6/9', targetChord.bass, useSharp);
+      } else {
+        return new Chord(targetChord.root, 'm9', targetChord.bass, useSharp);
+      }
+    }
+
+    // Case 3: Altered dominant approach (V7alt / V7#9 -> Target)
+    // Complex upper extensions on the dominant want clean, resonant resolutions (e.g. maj9 or m11)
+    if (approachTechnique === 'altered_dominant_expansion' || approachTechnique === 'tonicize') {
+      if (!isMin && targetChord.quality === 'maj') {
+        return new Chord(targetChord.root, 'maj7', targetChord.bass, useSharp);
+      }
+      if (isMin && targetChord.quality === 'm') {
+        return new Chord(targetChord.root, 'm7', targetChord.bass, useSharp);
+      }
+    }
+
+    // Case 4: Lydian Major 7#11 approach or Dark Chromatic Mediant approach
+    if (approachTechnique === 'maj7_sharp11') {
+      return new Chord(targetChord.root, 'maj7#11', targetChord.bass, useSharp);
+    }
+    if (approachTechnique === 'chromatic_mediant' || approachTechnique === 'dorian_dark') {
+      if (isMin) {
+        return new Chord(targetChord.root, 'm6', targetChord.bass, useSharp);
+      }
+    }
+
+    return targetChord;
+  }
+
   static fillBarBeats(barGrid: BeatSlot[], chordsList: Chord[], splitMode: 'standard' | 'early' | 'late' = 'standard') {
     const len = barGrid.length;
     if (len === 0 || !chordsList || chordsList.length === 0) return;
@@ -1891,7 +2160,23 @@ export class TargetBackwardEngine {
     const targetGrid = measureBeatGrids[targetMIdx];
     if (!targetGrid || targetGrid.length === 0) return measures;
 
-    const targetChordX = targetGrid[0].chord;
+    let targetChordX = targetGrid[0].chord;
+
+    // ADAPTIVE TARGET & RUNWAY ACCOMMODATION:
+    // If enabled, adapt targetChordX's quality/extensions to match incoming runwayTech
+    if (options.allowAdaptiveTarget && !lockedSet.has(targetMIdx)) {
+      const adaptedTarget = this.adaptTargetChord(targetChordX, runwayTech);
+      if (adaptedTarget.toString() !== targetChordX.toString()) {
+        targetChordX = adaptedTarget;
+        // Update all beat slots in targetGrid that had the original chord
+        for (let b = 0; b < targetGrid.length; b++) {
+          if (targetGrid[b].chord.root === adaptedTarget.root) {
+            targetGrid[b] = { chord: adaptedTarget, isAttack: targetGrid[b].isAttack };
+          }
+        }
+      }
+    }
+
     const approach = this.getApproachChords(targetChordX, runwayTech);
     const { step1, step2, step3, step4, twoChordCell, threeChordCell, fourChordCell } = approach;
     const isTwoFiveFamily = this.isTwoFiveFamilyTech(runwayTech);
@@ -3277,9 +3562,19 @@ export class TargetBackwardEngine {
     }
 
     // Adapt major progressions to minor specifically for dark reharm techniques
-    const effectiveMeasures = this.isDarkTechnique(techniqueId)
+    let effectiveMeasures = this.isDarkTechnique(techniqueId)
       ? this.adaptProgressionForDarkTechnique(measures, techniqueId)
       : measures;
+
+    // FUNCTIONAL SUBSTITUTION ENGINE:
+    // If enabled, perform functional substitutions on base chords before passing insertion
+    if (options.allowFunctionalSubstitution) {
+      effectiveMeasures = this.applyFunctionalSubstitutions(
+        effectiveMeasures,
+        options.lockedMeasures || [],
+        1
+      );
+    }
 
     const hasExplicitTarget =
       options.targetIndex !== undefined &&
@@ -3830,6 +4125,8 @@ export class ReharmMasterEngine {
     technique: string;
     strategy: string;
     neighborhood: HarmonicNeighborhood;
+    allowFunctionalSubstitution?: boolean;
+    allowAdaptiveTarget?: boolean;
   } {
     const targetIndex = this.detectTargetX();
     const runwayBarIdx = targetIndex > 0 ? targetIndex - 1 : (this.progression.length > 1 ? this.progression.length - 2 : 0);
@@ -3871,10 +4168,20 @@ export class ReharmMasterEngine {
     const pickedSv = subVariants[Math.floor(Math.random() * subVariants.length)];
     const pickedStrat = subVariants.length > 1 ? `${pickedBase}@${pickedSv}` : pickedBase;
 
+    // FUNCTIONAL SUBSTITUTION ENGINE:
+    // 35% probability check to creatively substitute a base chord for a functionally equivalent alternative
+    const allowFunctionalSubstitution = Math.random() < 0.35 && !isCrowded;
+
+    // ADAPTIVE TARGET & RUNWAY ACCOMMODATION:
+    // When approach techniques are active, allow landing target chord to adapt ~50% of the time
+    const allowAdaptiveTarget = Math.random() < 0.50;
+
     return {
       technique: chosenTech.id,
       strategy: pickedStrat,
-      neighborhood
+      neighborhood,
+      allowFunctionalSubstitution,
+      allowAdaptiveTarget
     };
   }
 }
@@ -6222,7 +6529,11 @@ const ReharmEngine = {
       parseInputByMeasures(state.baseProgression),
       bestResult.technique,
       bestResult.strategy,
-      opts
+      {
+        ...opts,
+        allowFunctionalSubstitution: bestResult.allowFunctionalSubstitution,
+        allowAdaptiveTarget: bestResult.allowAdaptiveTarget
+      }
     );
     let attempts = 0;
 
@@ -6233,7 +6544,11 @@ const ReharmEngine = {
         parseInputByMeasures(state.baseProgression),
         bestResult.technique,
         bestResult.strategy,
-        opts
+        {
+          ...opts,
+          allowFunctionalSubstitution: bestResult.allowFunctionalSubstitution,
+          allowAdaptiveTarget: bestResult.allowAdaptiveTarget
+        }
       );
     }
 
