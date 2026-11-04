@@ -1108,12 +1108,80 @@ export class TargetBackwardEngine {
     };
   }
 
+  // ============================================================================
+  // ORGANIC STEPPING STONE & BRIDGE GENERATION
+  // Calculates diatonic scalar bass, chromatic walking chords, secondary
+  // dominants, or modal passing tones connecting fromChord to toChord organically.
+  // ============================================================================
+  static getSteppingStoneBridge(fromChord: Chord, toChord: Chord, techniqueId: string): Chord {
+    const fromPitch = NOTE_TO_PITCH[fromChord.root] ?? 0;
+    const toPitch = NOTE_TO_PITCH[toChord.root] ?? 0;
+    const semitonesUp = ((toPitch - fromPitch) % 12 + 12) % 12;
+    const preferSharp = fromChord.preferSharps ?? toChord.preferSharps ?? false;
+
+    // Case 1: Chromatic Mediant or Step Down by Minor/Major 3rd (e.g. C -> Am, C -> A, F -> Dm)
+    // Create passing scalar bass (e.g. C/B leading downward to A, or passing diminished)
+    if (semitonesUp === 9 || semitonesUp === 8) {
+      // 3 or 4 semitones down: passing stepwise leading tone bass
+      const passingBass = this.transpose(fromChord.root, 11, preferSharp);
+      return new Chord(fromChord.root, fromChord.quality, passingBass, preferSharp);
+    }
+
+    // Case 2: Whole step ascending (e.g. C -> Dm, F -> G)
+    // Passing chromatic diminished chord (e.g. C#dim7) or chromatic bass
+    if (semitonesUp === 2) {
+      if (techniqueId === 'chromatic_voice_leading' || techniqueId === 'stepwise_inversion') {
+        const passingBass = this.transpose(fromChord.root, 1, preferSharp);
+        return new Chord(fromChord.root, fromChord.quality, passingBass, preferSharp);
+      }
+      const dimRoot = this.transpose(fromChord.root, 1, true);
+      return new Chord(dimRoot, '°7', null, true);
+    }
+
+    // Case 3: Perfect 4th ascending / 5th descending (e.g. C -> F, G -> C, Dm -> G)
+    // Passing secondary dominant, tritone sub, or suspended upper color
+    if (semitonesUp === 5) {
+      if (techniqueId === 'tritone_sub' || techniqueId === 'tritone_two_five') {
+        const biiRoot = this.transpose(toChord.root, 1, false);
+        return new Chord(biiRoot, '7', null, false);
+      }
+      if (techniqueId === 'backdoor_resolution') {
+        const bviiRoot = this.transpose(toChord.root, 10, false);
+        return new Chord(bviiRoot, '7', null, false);
+      }
+      // Standard secondary dominant V7 of toChord
+      const domRoot = this.transpose(toChord.root, 7, preferSharp);
+      return new Chord(domRoot, '7', null, preferSharp);
+    }
+
+    // Case 4: Perfect 4th descending / 5th ascending (e.g. F -> C, C -> G)
+    // Backdoor (bVII7), minor subdominant (ivm6), or passing diatonic inversion
+    if (semitonesUp === 7) {
+      if (techniqueId === 'plagal_variant') {
+        return new Chord(fromChord.root, 'm6', null, false);
+      }
+      const bviiRoot = this.transpose(toChord.root, 10, false);
+      return new Chord(bviiRoot, '7', null, false);
+    }
+
+    // Case 5: Half-step motion (semitonesUp === 1 or 11)
+    // Parallel side-step or chromatic voice leading
+    if (semitonesUp === 1) {
+      const v7OfTarget = this.transpose(toChord.root, 7, preferSharp);
+      return new Chord(v7OfTarget, '7', null, preferSharp);
+    }
+
+    // Default fallback: V7 approach to the destination chord
+    const defaultDomRoot = this.transpose(toChord.root, 7, preferSharp);
+    return new Chord(defaultDomRoot, '7', null, preferSharp);
+  }
+
   static fillBarBeats(barGrid: BeatSlot[], chordsList: Chord[], splitMode: 'standard' | 'early' | 'late' = 'standard') {
     const len = barGrid.length;
     if (len === 0 || !chordsList || chordsList.length === 0) return;
 
-    // Harmonic Density Guardrail: If measure is short (< 4 beats), do not cram > 2 chords
-    if (len < 4 && chordsList.length > 2) {
+    // Harmonic Density Guardrail: In short bars (< 3 beats), clamp to 2 chords
+    if (len < 3 && chordsList.length > 2) {
       chordsList = [chordsList[0], chordsList[chordsList.length - 1]];
     }
 
@@ -1127,6 +1195,9 @@ export class TargetBackwardEngine {
     if (chordsList.length === 2) {
       const [c1, c2] = chordsList;
       if (len === 3) {
+        // 3/4 Meter:
+        // 'late' / 'standard': Beats 1-2 = c1 (held), Beat 3 = c2 (passing/arrival attack)
+        // 'early': Beat 1 = c1, Beats 2-3 = c2
         const splitIdx = splitMode === 'early' ? 1 : 2;
         for (let b = 0; b < len; b++) {
           barGrid[b] = { chord: b < splitIdx ? c1 : c2, isAttack: b === 0 || b === splitIdx };
@@ -1144,6 +1215,7 @@ export class TargetBackwardEngine {
     if (chordsList.length === 3) {
       const [c1, c2, c3] = chordsList;
       if (len === 3) {
+        // Native 3/4 Waltz Meter: exactly 1 chord per beat (Beat 1, Beat 2, Beat 3)
         barGrid[0] = { chord: c1, isAttack: true };
         barGrid[1] = { chord: c2, isAttack: true };
         barGrid[2] = { chord: c3, isAttack: true };
@@ -1153,6 +1225,7 @@ export class TargetBackwardEngine {
           barGrid[1] = { chord: c2, isAttack: true };
           for (let b = 2; b < len; b++) barGrid[b] = { chord: c3, isAttack: b === 2 };
         } else {
+          // Standard / late: base chord occupies first beats (e.g. Beats 1-2), passing chords on Beats 3 & 4
           const firstSpan = len - 2;
           for (let b = 0; b < firstSpan; b++) barGrid[b] = { chord: c1, isAttack: b === 0 };
           barGrid[len - 2] = { chord: c2, isAttack: true };
@@ -1165,10 +1238,10 @@ export class TargetBackwardEngine {
     }
 
     if (len === 3) {
-      const last3 = chordsList.slice(-3);
-      barGrid[0] = { chord: last3[0], isAttack: true };
-      barGrid[1] = { chord: last3[1], isAttack: true };
-      barGrid[2] = { chord: last3[2], isAttack: true };
+      // 3/4 with >= 4 chords: select opening anchor chord and last two cadential approach chords
+      barGrid[0] = { chord: chordsList[0], isAttack: true };
+      barGrid[1] = { chord: chordsList[chordsList.length - 2], isAttack: true };
+      barGrid[2] = { chord: chordsList[chordsList.length - 1], isAttack: true };
     } else if (len >= 4) {
       const last4 = chordsList.slice(-4);
       barGrid[0] = { chord: last4[0], isAttack: true };
@@ -1369,7 +1442,7 @@ export class TargetBackwardEngine {
     // are only permitted if:
     // 1. The bar has a full 4-beat duration (or greater), AND
     // 2. The bar is the immediate Runway Bar (index Target X - 1) leading into a cadence arrival.
-    const isCrowded = origMeas.length >= 2 || len < 4;
+    const isCrowded = origMeas.length >= 2 || len < 3;
     let safeSubStyle = subStyle;
     if (!isRunwayBar || isCrowded) {
       if (safeSubStyle === 'beats234_walk' || safeSubStyle === 'beats34_two_chord') {
@@ -1384,11 +1457,18 @@ export class TargetBackwardEngine {
     // Case A: Single sustained chord in the measure (e.g. | D / / / |)
     if (origMeas.length === 1) {
       const baseChord = Chord.fromSymbol(origMeas[0].chord);
+      // Determine stepping stone chord organically bridging baseChord -> nextTargetChord
+      const bridgeChord = this.getSteppingStoneBridge(baseChord, nextTargetChord, techniqueId);
+
       if (len === 3) {
+        // Native 3/4 Waltz Meter:
         if ((isTwoFiveTech || safeSubStyle === 'beats34_two_chord' || safeSubStyle === 'beats234_walk') && isRunwayBar) {
+          // Waltz Runway: Beat 1 = Base Chord, Beat 2 = ii7, Beat 3 = V7 resolving to downbeat of next bar!
           this.fillBarBeats(barGrid, [baseChord, twoChordCell[0], twoChordCell[1]], 'standard');
         } else {
-          this.fillBarBeats(barGrid, [baseChord, step1], 'late');
+          // Waltz Passing: Beats 1-2 anchored to Base Chord, Beat 3 = stepping stone / approach pickup
+          const passingChord = safeSubStyle === 'beat4_pickup' ? bridgeChord : step1;
+          this.fillBarBeats(barGrid, [baseChord, passingChord], 'late');
         }
         return;
       }
@@ -1408,8 +1488,9 @@ export class TargetBackwardEngine {
       }
 
       if (safeSubStyle === 'beat4_pickup') {
-        // Keep baseChord on Beats 1, 2, 3; insert passing chord on Beat 4
-        this.fillBarBeats(barGrid, [baseChord, step1], 'late');
+        // Keep baseChord on Beats 1, 2, 3; insert organic stepping stone or passing chord on Beat 4
+        const pickup = bridgeChord.toString() !== baseChord.toString() ? bridgeChord : step1;
+        this.fillBarBeats(barGrid, [baseChord, pickup], 'late');
       } else if (safeSubStyle === 'beats34_single') {
         // Keep baseChord on Beats 1 & 2; insert passing chord on Beats 3 & 4
         this.fillBarBeats(barGrid, [baseChord, step1], 'standard');
@@ -1513,10 +1594,18 @@ export class TargetBackwardEngine {
     const firstChord = finalGrid[0].chord;
 
     if (len === 3) {
-      // 3/4 meter: keep Beats 1-2, insert turnaround pickup on Beat 3
-      const prevChordStr = finalGrid[len - 2].chord.toString();
-      const pickupChord = step1.toString() === prevChordStr ? twoChordCell[0] : step1;
-      finalGrid[len - 1] = { chord: pickupChord, isAttack: true, isTurnaround: true };
+      // 3/4 Waltz Meter Turnaround:
+      // If two-chord turnaround is requested (or core ii-V), map Beat 1 = base chord, Beat 2 = ii7, Beat 3 = V7
+      if ((resolvedStyle === 'two_chord' || isCoreTwoFive) && twoChordCell.length >= 2) {
+        finalGrid[0] = { chord: firstChord, isAttack: true };
+        finalGrid[1] = { chord: twoChordCell[0], isAttack: true, isTurnaround: true };
+        finalGrid[2] = { chord: twoChordCell[1], isAttack: true, isTurnaround: true };
+      } else {
+        // Single passing turnaround on Beat 3: Beats 1-2 anchored to base chord
+        const prevChordStr = finalGrid[len - 2].chord.toString();
+        const pickupChord = step1.toString() === prevChordStr ? twoChordCell[0] : step1;
+        finalGrid[len - 1] = { chord: pickupChord, isAttack: true, isTurnaround: true };
+      }
       return;
     }
 
@@ -1950,26 +2039,36 @@ export class TargetBackwardEngine {
             // Preserved base chord on Beats 1 & 2, 2-chord approach cell on Beats 3 & 4
             this.fillBarBeats(barR1, [origR1Chord, twoChordCell[0], twoChordCell[1]], 'standard');
           } else if (strat === 'strategy4') {
-            // Preserved base chord on Beats 1..3, late pickup on Beat 4
+            // Non-Destructive Harmonic Embroidery: Upper color overlay / late pickup on Beat 4
             this.fillBarBeats(barR1, [origR1Chord, step1], 'late');
           } else if (strat === 'strategy5') {
-            // Preserved base chord on Beats 1 & 2, approach on Beats 3 & 4
+            // Focused Runway: Preserved base chord on Beats 1 & 2, approach on Beats 3 & 4
             this.fillBarBeats(barR1, [origR1Chord, step1], 'standard');
           } else {
             // Strategy 6: Preserved base chord on Beat 1, 3-step passing walk on Beats 2, 3, 4
             this.fillBarBeats(barR1, [origR1Chord, step3, step2, step1], 'standard');
           }
         } else if (origR1Chord && barR1.length === 3) {
-          // 3/4 meter: base chord on Beats 1 & 2, passing pickup on Beat 3
-          this.fillBarBeats(barR1, [origR1Chord, step1], 'late');
+          // Native 3/4 Waltz Meter:
+          if ((isTwoFiveFamily || strat === 'strategy3' || strat === 'strategy6') && twoChordCell.length >= 2) {
+            // Waltz runway ii-V: Beat 1 = Base Chord, Beat 2 = ii7, Beat 3 = V7
+            this.fillBarBeats(barR1, [origR1Chord, twoChordCell[0], twoChordCell[1]], 'standard');
+          } else {
+            // Waltz passing: Beats 1 & 2 anchored to Base Chord, Beat 3 = approach pickup
+            this.fillBarBeats(barR1, [origR1Chord, step1], 'late');
+          }
         } else {
           this.fillBarBeats(barR1, twoChordCell, 'standard');
         }
       };
 
       // In earlier measures (r2Idx, r3Idx):
-      // ALWAYS keep original chords! Insert passing movement into next bar.
-      if (r2Idx >= 0 && !lockedSet.has(r2Idx)) {
+      // NON-DESTRUCTIVE "KEEP & WEAVE" RULE:
+      // In subtle / additive strategies (strategy1, strategy4, strategy5), earlier bars ring out fully
+      // across all beats unless user explicitly requested dense passing.
+      const isSubtleAdditiveMode = baseStrategy === 'strategy1' || baseStrategy === 'strategy4' || baseStrategy === 'strategy5';
+
+      if (r2Idx >= 0 && !lockedSet.has(r2Idx) && (!isSubtleAdditiveMode || density === 'DENSE')) {
         const barR2 = measureBeatGrids[r2Idx];
         if (barR2 && barR2.length >= 2) {
           this.insertPassingIntoBar(
@@ -1981,7 +2080,7 @@ export class TargetBackwardEngine {
           );
         }
       }
-      if (r3Idx >= 0 && !lockedSet.has(r3Idx)) {
+      if (r3Idx >= 0 && !lockedSet.has(r3Idx) && (!isSubtleAdditiveMode || density === 'DENSE')) {
         const barR3 = measureBeatGrids[r3Idx];
         const nextChordR2 = measureBeatGrids[r2Idx]?.[0]?.chord;
         if (barR3 && barR3.length >= 2 && nextChordR2) {
@@ -2001,12 +2100,21 @@ export class TargetBackwardEngine {
 
     // =========================================================================
     // RULE 3: AUTONOMOUS PASSING CHORDS ON INTERNAL / STATIC HELD BARS
-    // Changes the beats around the existing chords by inserting passing and
-    // in-between chords leading into the next chord
+    // NON-DESTRUCTIVE "KEEP & WEAVE" RULE:
+    // In additive strategies (strategy1, strategy4, strategy5), internal held bars
+    // ring out fully with original chords unless in DENSE mode, preserving the
+    // structural pillars of the progression!
     // =========================================================================
     if (mode === 'HYBRID') {
+      const isAdditivePreserve = baseStrategy === 'strategy1' || baseStrategy === 'strategy4' || baseStrategy === 'strategy5';
+
       for (let mIdx = 0; mIdx < numMeasures - 1; mIdx++) {
         if (mIdx === targetMIdx || mIdx === r1Idx || mIdx === r2Idx || mIdx === r3Idx || lockedSet.has(mIdx)) continue;
+
+        // Skip chopping up internal bars if user is in an additive / subtle mode unless DENSE is active
+        if (isAdditivePreserve && density !== 'DENSE') {
+          continue;
+        }
 
         const nextMIdx = mIdx + 1;
         const nextChord = measureBeatGrids[nextMIdx]?.[0]?.chord;
@@ -2796,13 +2904,13 @@ export class TargetBackwardEngine {
               return [{ ...item }];
             }
 
-            if (stratNum === 4 && item.beats >= 4) {
-              const half = Math.floor(item.beats / 2);
+            if (stratNum === 4 && item.beats >= 3) {
+              const span1 = item.beats === 3 ? 2 : Math.floor(item.beats / 2);
               return [
-                { chord: chord.toString(), beats: half },
+                { chord: chord.toString(), beats: span1 },
                 {
                   chord: new Chord(chord.root, 'add2', chord.bass, chord.preferSharps).toString(),
-                  beats: item.beats - half
+                  beats: item.beats - span1
                 }
               ];
             }
@@ -2824,7 +2932,7 @@ export class TargetBackwardEngine {
               (stratNum === 1 && mIdx > 0 && mIdx < measures.length - 1) ||
               (stratNum === 2 && mIdx % 2 === 1) ||
               (stratNum === 3 && mIdx === 1) ||
-              (stratNum === 4 && item.beats >= 4) ||
+              (stratNum === 4 && item.beats >= 3) ||
               (stratNum === 5 && (mIdx === 0 || mIdx === measures.length - 1)) ||
               stratNum >= 6;
 
@@ -2832,13 +2940,13 @@ export class TargetBackwardEngine {
               return [{ ...item }];
             }
 
-            if (stratNum === 4 && item.beats >= 4) {
-              const half = Math.floor(item.beats / 2);
+            if (stratNum === 4 && item.beats >= 3) {
+              const span1 = item.beats === 3 ? 2 : Math.floor(item.beats / 2);
               return [
-                { chord: new Chord(chord.root, 'add2', chord.bass, chord.preferSharps).toString(), beats: half },
+                { chord: new Chord(chord.root, 'add2', chord.bass, chord.preferSharps).toString(), beats: span1 },
                 {
                   chord: new Chord(chord.root, 'add9', thirdBass, chord.preferSharps).toString(),
-                  beats: item.beats - half
+                  beats: item.beats - span1
                 }
               ];
             }
@@ -2870,14 +2978,14 @@ export class TargetBackwardEngine {
               return [{ ...item }];
             }
 
-            const half = Math.max(1, Math.floor(item.beats / 2));
-            const remainder = item.beats - half;
+            const span1 = item.beats === 3 ? 2 : Math.max(1, Math.floor(item.beats / 2));
+            const remainder = item.beats - span1;
             const useSus2 = stratNum === 4 || (stratNum === 6 && mIdx % 2 === 1);
             const susQuality = useSus2 ? 'sus2' : 'sus4';
 
             const susChord = new Chord(chord.root, susQuality, chord.bass, chord.preferSharps);
             return [
-              { chord: susChord.toString(), beats: half },
+              { chord: susChord.toString(), beats: span1 },
               { chord: chord.toString(), beats: remainder }
             ];
           });
@@ -2895,13 +3003,13 @@ export class TargetBackwardEngine {
                 chosenBass = chord.getThirdNote();
               }
             } else if (stratNum === 2) {
-              if (item.beats >= 4) {
-                const half = Math.floor(item.beats / 2);
+              if (item.beats >= 3) {
+                const span1 = item.beats === 3 ? 2 : Math.floor(item.beats / 2);
                 return [
-                  { chord: chord.toString(), beats: half },
+                  { chord: chord.toString(), beats: span1 },
                   {
                     chord: new Chord(chord.root, chord.quality, chord.getThirdNote(), chord.preferSharps).toString(),
-                    beats: item.beats - half
+                    beats: item.beats - span1
                   }
                 ];
               }
@@ -2950,13 +3058,13 @@ export class TargetBackwardEngine {
               return [{ ...item }];
             }
 
-            if (stratNum === 6 && item.beats >= 4) {
-              const half = Math.floor(item.beats / 2);
+            if (stratNum === 6 && item.beats >= 3) {
+              const span1 = item.beats === 3 ? 2 : Math.floor(item.beats / 2);
               return [
-                { chord: chord.toString(), beats: half },
+                { chord: chord.toString(), beats: span1 },
                 {
                   chord: new Chord(chord.root, isMin ? 'madd9' : 'add9', chord.bass, chord.preferSharps).toString(),
-                  beats: item.beats - half
+                  beats: item.beats - span1
                 }
               ];
             }
@@ -3741,11 +3849,23 @@ export class ReharmMasterEngine {
     const candidateTechs = this.getTechniquesForNeighborhood(neighborhood, isCrowded);
     const chosenTech = candidateTechs[Math.floor(Math.random() * candidateTechs.length)] || candidateTechs[0];
 
-    const preservedStrategies = ['strategy1', 'strategy2', 'strategy3', 'strategy4', 'strategy5', 'strategy6'];
+    // BALANCED RANDOMIZATION POOL:
+    // Favor non-destructive additive ideas (adding passing chords, mu/add9 color overlays,
+    // stepping stones, or pedal points) 85-90% of the time, while allowing dramatic replacements 10-15%
+    const preservedStrategies = [
+      'strategy1', // Spacious Runway & Additive Passing
+      'strategy2', // Late Beat-4 Pickup / Upbeat syncopation
+      'strategy3', // 2-chord runway cell with anchored base chord
+      'strategy4', // Upper-structure Color Overlay / Non-destructive embroidery
+      'strategy5', // Focused Runway Cadential Passing
+      'strategy6'  // Melodic Stepping-Stone Walk
+    ];
     const replacementStrategies = ['strategy7', 'strategy8'];
     const subVariants = TargetBackwardEngine.getSubVariantsForTechnique(chosenTech.id);
 
-    const wantsReplacement = Math.random() < 0.20 && !isCrowded;
+    const isWaltz = this.timeSignature.startsWith('3');
+    // In 3/4 waltz meter or crowded measures, strictly limit heavy replacements to 10%
+    const wantsReplacement = !isCrowded && Math.random() < (isWaltz ? 0.10 : 0.14);
     const stratPool = wantsReplacement ? replacementStrategies : preservedStrategies;
     const pickedBase = stratPool[Math.floor(Math.random() * stratPool.length)];
     const pickedSv = subVariants[Math.floor(Math.random() * subVariants.length)];
@@ -4347,10 +4467,16 @@ function parseInputByMeasures(str: string): ChordBeatItem[][] {
           m[0].beats = 2;
           m[1].beats = 1;
         }
-      } else if (m.length === 3 && total < activeMeter && activeMeter === 4) {
-        m[0].beats = 2;
-        m[1].beats = 1;
-        m[2].beats = 1;
+      } else if (m.length === 3 && total < activeMeter) {
+        if (activeMeter === 4) {
+          m[0].beats = 2;
+          m[1].beats = 1;
+          m[2].beats = 1;
+        } else if (activeMeter === 3) {
+          m[0].beats = 1;
+          m[1].beats = 1;
+          m[2].beats = 1;
+        }
       }
     });
   }
