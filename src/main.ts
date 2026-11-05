@@ -163,7 +163,7 @@ export class Chord {
     if (!match) return new Chord('C', 'maj');
 
     const rawRoot = match[1].charAt(0).toUpperCase() + match[1].slice(1);
-    const rawQual = match[2].trim();
+    const rawQual = match[2].trim().replace(/[∆▲△]/g, 'Δ');
     const useSharp = rawRoot.includes('#') || (!rawRoot.includes('b') && SHARP_ROOTS.has(rawRoot));
 
     let quality = 'maj';
@@ -171,13 +171,21 @@ export class Chord {
       quality = '°7';
     } else if (rawQual === 'ø' || rawQual.includes('m7b5') || rawQual.includes('m7(b5)') || rawQual.includes('dim')) {
       quality = 'm7b5';
-    } else if (rawQual === 'm(maj7)' || rawQual === 'mMaj7' || rawQual === 'mΔ7' || rawQual === 'mΔ') {
+    } else if (rawQual === 'm(maj7)' || rawQual === 'mMaj7' || rawQual === 'mΔ7' || rawQual === 'mΔ' || rawQual === 'm(Δ7)') {
       quality = 'm(maj7)';
-    } else if (rawQual.includes('#11') || rawQual.includes('maj7#11') || rawQual.includes('Δ#11')) {
+    } else if (rawQual.includes('#11') || rawQual.includes('maj7#11') || rawQual.includes('Δ#11') || rawQual.includes('Δ7#11')) {
       quality = rawQual.includes('9#11') ? '9#11' : 'maj7#11';
-    } else if (rawQual.includes('maj9') || rawQual.includes('Maj9') || rawQual.includes('Δ9')) {
+    } else if (rawQual.includes('maj9') || rawQual.includes('Maj9') || rawQual.includes('Δ9') || rawQual.includes('Δ7(9)')) {
       quality = 'maj9';
-    } else if (rawQual === 'Δ' || rawQual.includes('maj7') || rawQual.includes('M7') || rawQual.includes('Maj7')) {
+    } else if (
+      rawQual === 'Δ' ||
+      rawQual === 'Δ7' ||
+      rawQual.includes('Δ7') ||
+      rawQual.includes('maj7') ||
+      rawQual.includes('M7') ||
+      rawQual.includes('Maj7') ||
+      rawQual.includes('Δ')
+    ) {
       quality = 'maj7';
     } else if (rawQual.includes('6/9') || rawQual.includes('69')) {
       quality = '6/9';
@@ -4187,8 +4195,9 @@ export class ReharmMasterEngine {
 }
 
 function normalizeChordSymbol(sym: string): string {
-  if (!sym || sym === '/' || sym === '|') return sym;
-  const parts = sym.split('/');
+  if (!sym || sym === '/' || sym === '|' || sym === ':|' || sym === '%' || sym === ':') return sym;
+  const normalized = sym.replace(/[∆▲△]/g, 'Δ');
+  const parts = normalized.split('/');
   const normPart = (p: string) => {
     if (!p) return p;
     const m = p.match(/^([a-gA-G])([#b]?)(.*)$/);
@@ -4204,9 +4213,8 @@ function normalizeChordSymbol(sym: string): string {
 function normalizeProgressionString(rawStr: string): string {
   if (!rawStr || !rawStr.trim()) return '';
   let s = rawStr.trim();
-  if (s.includes(':')) {
-    const afterColon = s.split(':').slice(1).join(':').trim();
-    if (afterColon) s = afterColon;
+  if (/^\s*\d+\s*:\s*/.test(s)) {
+    s = s.replace(/^\s*\d+\s*:\s*/, '');
   }
   // Convert two-chord split slashes like Cmaj7/B7 or Am11/Bb7sus to intra-bar chords
   s = s.replace(/([A-G][#b]?[^\s|/]*)\/([A-G][#b]?(?:7|m|maj|dim|aug|sus|9|11|13)[^\s|/]*)/g, '$1 - $2');
@@ -4217,11 +4225,13 @@ function normalizeProgressionString(rawStr: string): string {
   s = s
     .replace(/\s*(?:->|→)\s*/g, ' | ')
     .replace(/\s+[-–—]\s+/g, ' | ')
+    .replace(/:\s*\|\s*/g, ' :| ')
     .replace(/\s*\|\s*/g, ' | ')
-    .replace(/^\|\s*|\s*\|$/g, '');
+    .replace(/^\|\s*|(?<!:)\s*\|$/g, '');
 
   const bars = s.split('|').map(b => b.trim()).filter(Boolean);
   const cleanedBars = bars.map(bar => {
+    if (bar === ':|' || bar === '%' || bar === '||') return bar;
     const toks = bar.split(/\s+/).filter(Boolean);
     const nonSlash = toks.filter(t => t !== '/' && t !== '-' && t !== '–' && t !== '—');
     if (nonSlash.length === 1 && toks[0] !== '/') {
