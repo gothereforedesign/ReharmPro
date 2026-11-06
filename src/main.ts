@@ -83,6 +83,12 @@ interface VaultPayload {
   explicitLayoutSet?: boolean;
   isBeatActive?: boolean;
   bpm?: number;
+  currentInputProgression?: string;
+  selectedReharmSet?: HarmonicNeighborhood | 'all' | 'basic' | 'jazz' | 'dark';
+  selectedTechnique?: string;
+  reharmActive?: boolean;
+  meter?: number;
+  manualMeterOverride?: boolean;
 }
 
 interface BeforeInstallPromptEvent extends Event {
@@ -4362,7 +4368,13 @@ function loadInitialVaultSync(): VaultPayload {
     barsPerRow: 1,
     explicitLayoutSet: false,
     isBeatActive: true,
-    bpm: 80
+    bpm: 80,
+    currentInputProgression: undefined,
+    selectedReharmSet: 'all',
+    selectedTechnique: 'default',
+    reharmActive: false,
+    meter: 4,
+    manualMeterOverride: false
   };
 
   try {
@@ -4388,7 +4400,13 @@ function loadInitialVaultSync(): VaultPayload {
           barsPerRow: parsed.explicitLayoutSet && parsed.barsPerRow === 2 ? 2 : 1,
           explicitLayoutSet: !!parsed.explicitLayoutSet,
           isBeatActive: parsed.isBeatActive !== undefined ? parsed.isBeatActive : true,
-          bpm: typeof parsed.bpm === 'number' && parsed.bpm >= 50 && parsed.bpm <= 220 ? parsed.bpm : 80
+          bpm: typeof parsed.bpm === 'number' && parsed.bpm >= 50 && parsed.bpm <= 220 ? parsed.bpm : 80,
+          currentInputProgression: typeof parsed.currentInputProgression === 'string' && parsed.currentInputProgression.trim().length > 0 ? parsed.currentInputProgression : undefined,
+          selectedReharmSet: parsed.selectedReharmSet || 'all',
+          selectedTechnique: parsed.selectedTechnique || 'default',
+          reharmActive: !!parsed.reharmActive,
+          meter: parsed.meter === 3 || parsed.meter === 4 ? parsed.meter : 4,
+          manualMeterOverride: !!parsed.manualMeterOverride
         };
       }
     }
@@ -4402,21 +4420,25 @@ const initialVault = loadInitialVaultSync();
 const DEFAULT_START_PROGRESSION =
   initialVault.savedSections.basic[0] || DEFAULT_BASIC_PROGRESSIONS[0] || 'G | D | Em | C';
 
+const hasSavedInputProgression =
+  typeof initialVault.currentInputProgression === 'string' &&
+  initialVault.currentInputProgression.trim().length > 0;
+
 const state = {
   currentScreen: 'generator' as 'generator' | 'saved',
-  // Default progression is whatever is first in the Basic category
-  baseProgression: DEFAULT_START_PROGRESSION,
-  userChangedBaseProgression: false,
-  meter: 4,
-  manualMeterOverride: false,
-  reharmSet: 'all' as HarmonicNeighborhood | 'all' | 'basic' | 'jazz' | 'dark',
-  selectedTechnique: 'default',
+  // Preserves whatever was previously entered into the input bar across resets
+  baseProgression: hasSavedInputProgression ? initialVault.currentInputProgression! : DEFAULT_START_PROGRESSION,
+  userChangedBaseProgression: hasSavedInputProgression,
+  meter: initialVault.meter || 4,
+  manualMeterOverride: !!initialVault.manualMeterOverride,
+  reharmSet: (initialVault.selectedReharmSet || 'all') as HarmonicNeighborhood | 'all' | 'basic' | 'jazz' | 'dark',
+  selectedTechnique: initialVault.selectedTechnique || 'default',
   selectedStrategy: 'strategy1',
   reharmMode: 'HYBRID' as ReharmMode,
   reharmDensity: 'BALANCED' as ReharmDensity,
   targetMeasureIdx: null as number | null,
   lockedMeasures: [] as number[],
-  reharmActive: false,
+  reharmActive: !!initialVault.reharmActive,
   strategyCycleIndex: 0,
   editingBaseIdx: null as number | null,
   editingSavedKey: null as string | null,
@@ -4455,6 +4477,11 @@ function syncDefaultProgressionInputUI() {
 
 function persistVault() {
   state.vaultUpdatedAt = Date.now();
+  const mainInput = document.getElementById('singleProgInput') as HTMLInputElement | null;
+  if (mainInput && typeof mainInput.value === 'string' && mainInput.value.trim().length > 0) {
+    state.baseProgression = mainInput.value;
+  }
+
   const payload: VaultPayload = {
     updatedAt: state.vaultUpdatedAt,
     theme: state.theme,
@@ -4464,7 +4491,13 @@ function persistVault() {
     barsPerRow: state.barsPerRow,
     explicitLayoutSet: state.explicitLayoutSet,
     isBeatActive: state.isBeatActive,
-    bpm: state.bpm
+    bpm: state.bpm,
+    currentInputProgression: state.baseProgression,
+    selectedReharmSet: state.reharmSet,
+    selectedTechnique: state.selectedTechnique,
+    reharmActive: state.reharmActive,
+    meter: state.meter,
+    manualMeterOverride: state.manualMeterOverride
   };
 
   try {
@@ -4524,10 +4557,33 @@ async function syncAndHealVault() {
       audioEngine.setBpm(state.bpm);
       updateTransportUI();
     }
-    if (!state.userChangedBaseProgression) {
+    if (typeof newest.currentInputProgression === 'string' && newest.currentInputProgression.trim().length > 0) {
+      state.baseProgression = newest.currentInputProgression;
+      state.userChangedBaseProgression = true;
+      const input = document.getElementById('singleProgInput') as HTMLInputElement | null;
+      if (input) input.value = state.baseProgression;
+    } else if (!state.userChangedBaseProgression && !hasSavedInputProgression) {
       state.baseProgression = getDefaultBaseProgression();
       const input = document.getElementById('singleProgInput') as HTMLInputElement | null;
       if (input) input.value = state.baseProgression;
+    }
+    if (newest.selectedReharmSet) {
+      state.reharmSet = newest.selectedReharmSet;
+      updateReharmSetUI();
+    }
+    if (newest.selectedTechnique) {
+      state.selectedTechnique = newest.selectedTechnique;
+      updateReharmSetUI();
+    }
+    if (newest.reharmActive !== undefined) {
+      state.reharmActive = newest.reharmActive;
+    }
+    if (newest.meter) {
+      state.meter = newest.meter;
+      updateMeterBadgeUI();
+    }
+    if (newest.manualMeterOverride !== undefined) {
+      state.manualMeterOverride = newest.manualMeterOverride;
     }
     syncDefaultProgressionInputUI();
     applyThemeToDOM();
@@ -4546,7 +4602,13 @@ async function syncAndHealVault() {
     barsPerRow: state.barsPerRow,
     explicitLayoutSet: state.explicitLayoutSet,
     isBeatActive: state.isBeatActive,
-    bpm: state.bpm
+    bpm: state.bpm,
+    currentInputProgression: state.baseProgression,
+    selectedReharmSet: state.reharmSet,
+    selectedTechnique: state.selectedTechnique,
+    reharmActive: state.reharmActive,
+    meter: state.meter,
+    manualMeterOverride: state.manualMeterOverride
   };
   try {
     localStorage.setItem(VAULT_LS_KEY, JSON.stringify(currentPayload));
@@ -4647,14 +4709,15 @@ function parseInputByMeasures(str: string): ChordBeatItem[][] {
   if (!str || !str.trim()) return [];
 
   let cleanStr = str.trim();
-  if (cleanStr.includes(':')) {
-    const afterColon = cleanStr.split(':').slice(1).join(':').trim();
-    if (afterColon && !/^\d+$/.test(afterColon)) {
-      cleanStr = afterColon;
-    }
+  if (/^\s*\d+\s*:\s*/.test(cleanStr)) {
+    cleanStr = cleanStr.replace(/^\s*\d+\s*:\s*/, '');
   }
 
+  // Handle measure repeat signs :| or |: or %
+  // Transform ':|' into ' | %REPEAT% | ' so the preceding measure is cleanly duplicated
   cleanStr = cleanStr
+    .replace(/:\s*\|\s*:/g, ' | %REPEAT% | ')
+    .replace(/:\s*\|/g, ' | %REPEAT% | ')
     .replace(/\s*(?:->|→)\s*/g, ' | ')
     .replace(/\s+[-–—]\s+/g, ' | ')
     .replace(/\s*[.;]+\s*/g, ' | ')
@@ -4677,6 +4740,16 @@ function parseInputByMeasures(str: string): ChordBeatItem[][] {
   rawMeasures.forEach(mStr => {
     const trimmed = mStr.trim();
     if (!trimmed) return;
+
+    if (trimmed === '%REPEAT%' || trimmed === '%' || trimmed === ':|' || trimmed === '||') {
+      if (measures.length > 0) {
+        const prevBar = measures[measures.length - 1];
+        const clonedBar = prevBar.map(item => ({ ...item }));
+        measures.push(clonedBar);
+        measureHasExplicitSlash.push(measureHasExplicitSlash[measureHasExplicitSlash.length - 1] ?? false);
+      }
+      return;
+    }
 
     const tokens = trimmed.split(/\s+/).filter(Boolean);
     const chords: ChordBeatItem[] = [];
@@ -4803,8 +4876,9 @@ function parseInputByMeasures(str: string): ChordBeatItem[][] {
 
 function formatChordHtml(str: string): string {
   if (!str) return '';
-  return str.replace(
-    /6\/9|Δ#11|maj7#11|Δ9|maj9|\(maj7\)|7\(b5\)|\(b5\)|7alt|7#9|9#11|9sus4|7sus4|7sus2|7aug|add2|add9|maj7|7b5|m7\(add11\)|m7add2|m11|min11|m9|min9|dim7|dim|7\(b9,b13\)|7\(b9\)|7\(#9\)|7\(#11\)|7\+|°7|Δ|ø|\+6|\+|7|9|11|13|6/g,
+  const normalized = str.replace(/[∆▲△]/g, 'Δ');
+  return normalized.replace(
+    /6\/9|Δ#11|Δ7#11|maj7#11|Maj7#11|Δ9|maj9|Maj9|\(maj7\)|Maj7|maj7|Δ7|Δ|7\(b5\)|\(b5\)|7alt|7#9|9#11|9sus4|7sus4|7sus2|7aug|add2|add9|7b5|m7\(add11\)|m7add2|m11|min11|m9|min9|dim7|dim|7\(b9,b13\)|7\(b9\)|7\(#9\)|7\(#11\)|7\+|°7|ø|\+6|\+|7|9|11|13|6/g,
     m => `<sup>${m}</sup>`
   );
 }
@@ -4834,12 +4908,18 @@ function formatProgressionCardHtml(progStr: string): string {
   const measures = norm.split('|').map(s => s.trim()).filter(Boolean);
   return measures
     .map(m => {
+      if (m === ':|') {
+        return `<span class="text-sky-600 dark:text-[#38bdf8] font-bold font-mono-tabular text-sm">:|</span>`;
+      }
       const tokens = m
         .split(/\s+/)
         .filter(Boolean)
         .map(tok => {
           if (tok === '/') {
             return `<span class="text-slate-400 dark:text-[#38bdf8]/60 font-bold">/</span>`;
+          }
+          if (tok === ':|') {
+            return `<span class="text-sky-600 dark:text-[#38bdf8] font-bold font-mono-tabular">:|</span>`;
           }
           return `<span class="text-slate-900 dark:text-white">${formatChordHtml(tok)}</span>`;
         })
@@ -5348,9 +5428,22 @@ function insertSymbolIntoInputEl(input: HTMLInputElement | null, symbol: string)
 
   let nextBefore = before;
   if (symbol === '|') {
-    const trimmedBefore = before.replace(/\s+$/, '');
-    if (trimmedBefore && !trimmedBefore.endsWith('|')) {
-      nextBefore = trimmedBefore + ' | ';
+    // If text before cursor already ends with ':|' or ':| ', toggle back to regular separator '| '
+    if (/:\s*\|\s*$/.test(before)) {
+      nextBefore = before.replace(/:\s*\|\s*$/, '') + ' | ';
+    }
+    // If text before cursor already ends with '|' or '| ', second press turns it into repeat sign ':| '
+    else if (/\|\s*$/.test(before)) {
+      nextBefore = before.replace(/\|\s*$/, '') + ' :| ';
+    }
+    // First press: add separator '| '
+    else {
+      const trimmedBefore = before.replace(/\s+$/, '');
+      if (trimmedBefore) {
+        nextBefore = trimmedBefore + ' | ';
+      } else {
+        nextBefore = '| ';
+      }
     }
   } else if (symbol === '/') {
     if (!before || /\s$/.test(before)) {
@@ -5635,8 +5728,16 @@ function setupInteractions() {
     }
   }, { passive: true });
 
+  // Turn off audio whenever user leaves the app (tab switch, window blur, screen lock, app background)
+  const stopAudioOnAppLeave = () => {
+    if (audioEngine.getIsPlaying()) {
+      audioEngine.stop(true);
+    }
+  };
+
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
+      stopAudioOnAppLeave();
       persistVault();
     } else if (document.visibilityState === 'visible') {
       syncAndHealVault();
@@ -5644,7 +5745,18 @@ function setupInteractions() {
   });
 
   window.addEventListener('pagehide', () => {
+    stopAudioOnAppLeave();
     persistVault();
+  });
+
+  window.addEventListener('freeze', () => {
+    stopAudioOnAppLeave();
+  });
+
+  window.addEventListener('blur', () => {
+    if (document.hidden) {
+      stopAudioOnAppLeave();
+    }
   });
 
   // Global Keyboard Shortcuts (Space: Play/Stop, T: Cycle Tempo, K: Cycle Keys, B: Toggle Drums, L: Toggle Loop)
@@ -5760,7 +5872,9 @@ const ReharmEngine = {
     if (state.bpm) {
       audioEngine.setBpm(state.bpm);
     }
-    state.baseProgression = getDefaultBaseProgression();
+    if (!state.userChangedBaseProgression && !hasSavedInputProgression) {
+      state.baseProgression = getDefaultBaseProgression();
+    }
     const input = document.getElementById('singleProgInput') as HTMLInputElement | null;
     if (input) input.value = state.baseProgression;
     syncDefaultProgressionInputUI();
@@ -6099,6 +6213,7 @@ const ReharmEngine = {
     if (techPopover) techPopover.classList.add('hidden');
     updateReharmSetUI();
     renderOutput();
+    persistVault();
   },
 
   toggleSaveCurrentProgression() {
@@ -6206,6 +6321,7 @@ const ReharmEngine = {
     if (input) input.value = prog;
     updateReharmSetUI();
     this.switchScreen('generator');
+    persistVault();
   },
 
   moveSavedProgression(secKey: SavedSectionKey, idx: number, direction: -1 | 1) {
@@ -6313,6 +6429,7 @@ const ReharmEngine = {
     state.manualMeterOverride = true;
     updateMeterBadgeUI();
     renderOutput();
+    persistVault();
   },
 
   insertInputSymbol(symbol: string) {
@@ -6335,6 +6452,7 @@ const ReharmEngine = {
     if (techPopover) techPopover.classList.add('hidden');
     updateReharmSetUI();
     renderOutput();
+    persistVault();
   },
 
   openPresetsModal() {
@@ -6428,6 +6546,7 @@ const ReharmEngine = {
     renderOutput();
     renderSavedProgressionsList();
     this.closePresetsModal();
+    persistVault();
   },
 
   startEditBaseProgression(idx: number) {
@@ -6496,6 +6615,7 @@ const ReharmEngine = {
       state.selectedTechnique = 'default';
       updateReharmSetUI();
       renderOutput();
+      persistVault();
     }
   },
 
@@ -6568,6 +6688,7 @@ const ReharmEngine = {
 
     updateReharmSetUI();
     renderOutput();
+    persistVault();
   },
 
   playChordString(chordStr: string, beats = 2) {
